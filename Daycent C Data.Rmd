@@ -1,0 +1,91 @@
+---
+title: "Daycent C Data"
+author: "Dr. Chih-Yu Hung"
+date: "2024-05-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Daycent data preparation
+
+Canada’s NIR have estimate annual ΔSOC at ecodistrict level. According to Thiagarajan et al., (2022), ΔSOC have a strong relationship with site specific variables and C inputs. We therefore propose to build a regression model to predict ΔSOC. The regression model could have variables including mean annual precipitation, mean air temperature, mean temperature in growing seasons, C input, initial C stock, soil texture and agronomic practices 
+
+
+This document will organize the data from AAFC (ElKhoury, Antoun (AAFC/AAC) <antoun.elkhoury@AGR.GC.CA>).
+Files include:
+
+1) CinputsAtEcodprov_19Oct2023: is the ecodistrict C input used for the model run.
+2) ecodcinputbycrop: is the cinput values by crop after adjustment for residue removal.
+3) EcoProvTexSites: is the carbon initialization values (note carbon data is in g/m2).
+4) SiteAdjDelta_19Oct2023: the inventory delta C output from 1990 to 2022.
+5) slyieldadj19102023: is the adjusted yield data used for the model run.
+6) weather_master: is the climate file.
+
+```{r Loading data}
+Cinput    <-read.csv("Input/CropC_Daycent/CinputsAtEcodprov_19Oct2023.csv") #C input proportion not crop specific
+Ecodc     <-read.csv("Input/CropC_Daycent/ecodcinputbycrop.csv") # C input crop specific 
+EcoP      <-read.csv("Input/CropC_Daycent/EcoProvTexSites.csv") # C ini values
+SiteAdj   <-read.csv("Input/CropC_Daycent/SiteAdjDelta_19Oct2023.csv") # Delta C not crop specific
+Slyield   <-read.csv("Input/CropC_Daycent/slyieldadj19102023.csv") # yield data, no need
+Weather_y <-read.csv("Input/CropC_Daycent/weather_master.csv") #weahter
+
+#prepare weather data from monthly to yearly, the table will have
+#Ecodistrict, MAP, MAT, MAP_grow, MAP_grow, MPE(mean potential evapotranspiration) and MPE_grow. The _grow means average values in May-Oct. 
+
+grow <- c(5:10) #Define growing season in May-Oct
+Weather <- Weather_y %>%
+  select(Ecodistrict = ECODISTRIC, month, pe, precip, temp) %>%
+  group_by(Ecodistrict) %>%
+  summarise(MAP = sum(precip),MAT = mean(temp),MPE = sum(pe),
+            MAP_grow = sum(precip[month %in% grow]),
+            MAT_grow = mean(temp[month %in% grow]),
+            MPE_grow = sum(pe[month %in% grow]))
+                           
+#Prepare C input based on C input proportion and crop specific C input(t)
+TotalCinput <- Ecodc %>%
+  group_by(ECODISTRIC, YEAR, Province_ID) %>%
+  summarise(Cinput = sum(CInput_withRootExudates_t))
+```
+
+
+## Making Dataframe, prepare for model
+
+### Major file: `SiteAdj`, the `deltaSOCAdj` (t/ha, not crop specific) is the fine result
+
+```{r Data preparation}
+
+SiteData <- SiteAdj %>%
+  select(Year = year, SiteName, Province = Province_ID, Ecodistrict = ECODISTRIC, Area = Area_per_site_Ha, deltaSOC = deltaSOCAdj )
+
+#join the weather data
+SiteData <- SiteData %>%
+  inner_join(Weather, by = c("Ecodistrict" = "Ecodistrict" )) %>%
+  inner_join(EcoP, by = c("Ecodistrict" =  "ECODISTRIC", "Province" = "PROVINCE","SiteName" = "sitename"))
+  
+
+#join the Cinput
+SiteData <- SiteData %>%
+  inner_join(TotalCinput, by = c( "Ecodistrict" = "ECODISTRIC", "Province" = "Province_ID", "Year" = "YEAR"))
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+```{r stepwise model}
+full_model <- lm(deltaSOC ~ .-Year -SiteName -Province - Ecodistrict - Area, data = SiteData)
+stepwise_model <- step(full_model, direction = "backward")
+summary(stepwise_model)
+cat("R² value: ", summary(stepwise_model)$r.squared, "\n")
+
+
+model <- lm(deltaSOC ~ MAP + TCLAY + CARB30 + Cinput, data = SiteData)
+stepwise_model <- step(model, direction = "backward")
+summary(stepwise_model)
+
+```
