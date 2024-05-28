@@ -1,5 +1,5 @@
 ---
-title: "Daycent C Data"
+title: "Delta SOC_Crop input"
 author: "Dr. Chih-Yu Hung"
 date: "2024-05-15"
 output: html_document
@@ -8,30 +8,33 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(polycor)
+library(mgcv)
+library(caret)
+
 ```
 
 ## Daycent data preparation
 
-Canada’s NIR have estimate annual ΔSOC at ecodistrict level. According to Thiagarajan et al., (2022), ΔSOC have a strong relationship with site specific variables and C inputs. We therefore propose to build a regression model to predict ΔSOC. The regression model could have variables including mean annual precipitation, mean air temperature, mean temperature in growing seasons, C input, initial C stock, soil texture and agronomic practices 
+Canada’s NIR have estimate annual ΔSOC at ecodistrict level. According to Thiagarajan et al., (2022), ΔSOC have a strong relationship with site specific variables and C inputs. We therefore propose to build a regression model to predict ΔSOC. The regression model could have variables including mean annual precipitation, mean air temperature, mean temperature in growing seasons, C input, initial C stock, and soil texture. 
 
-
-This document will organize the data from AAFC (ElKhoury, Antoun (AAFC/AAC) <antoun.elkhoury@AGR.GC.CA>).
+This document organized the data from AAFC (ElKhoury, Antoun (AAFC/AAC) <antoun.elkhoury@AGR.GC.CA>).
 Files include:
 
-1) CinputsAtEcodprov_19Oct2023: is the ecodistrict C input used for the model run.
-2) ecodcinputbycrop: is the cinput values by crop after adjustment for residue removal.
-3) EcoProvTexSites: is the carbon initialization values (note carbon data is in g/m2).
-4) SiteAdjDelta_19Oct2023: the inventory delta C output from 1990 to 2022.
-5) slyieldadj19102023: is the adjusted yield data used for the model run.
-6) weather_master: is the climate file.
+1) CinputsAtEcodprov_19Oct2023: the ecodistrict C input used for the model run.
+2) ecodcinputbycrop:            the cinput values by crop after adjustment for residue removal.
+3) EcoProvTexSites:             the carbon initialization values (note carbon data is in g/m2).
+4) SiteAdjDelta_19Oct2023:      the inventory delta C output from 1990 to 2022.
+5) slyieldadj19102023:          the adjusted yield data used for the model run.
+6) weather_master:              the climate file.
 
 ```{r Loading data}
-Cinput    <-read.csv("Input/CropC_Daycent/CinputsAtEcodprov_19Oct2023.csv") #C input proportion not crop specific
-Ecodc     <-read.csv("Input/CropC_Daycent/ecodcinputbycrop.csv") # C input crop specific 
-EcoP      <-read.csv("Input/CropC_Daycent/EcoProvTexSites.csv") # C ini values
-SiteAdj   <-read.csv("Input/CropC_Daycent/SiteAdjDelta_19Oct2023.csv") # Delta C not crop specific
-Slyield   <-read.csv("Input/CropC_Daycent/slyieldadj19102023.csv") # yield data, no need
-Weather_y <-read.csv("Input/CropC_Daycent/weather_master.csv") #weahter
+Cinput    <- read.csv("Input/CropC_Daycent/CinputsAtEcodprov_19Oct2023.csv") #C input proportion not crop specific
+Ecodc     <- read.csv("Input/CropC_Daycent/ecodcinputbycrop.csv") # C input crop specific 
+EcoP      <- read.csv("Input/CropC_Daycent/EcoProvTexSites.csv") # C ini values
+SiteAdj   <- read.csv("Input/CropC_Daycent/SiteAdjDelta_19Oct2023.csv") # Delta C not crop specific
+Slyield   <- read.csv("Input/CropC_Daycent/slyieldadj19102023.csv") # yield data, no need
+Weather_y <- read.csv("Input/CropC_Daycent/weather_master.csv") #weahter
 
 #prepare weather data from monthly to yearly, the table will have
 #Ecodistrict, MAP, MAT, MAP_grow, MAP_grow, MPE(mean potential evapotranspiration) and MPE_grow. The _grow means average values in May-Oct. 
@@ -54,7 +57,7 @@ TotalCinput <- Ecodc %>%
 
 ## Making Dataframe, prepare for model
 
-### Major file: `SiteAdj`, the `deltaSOCAdj` (t/ha, not crop specific) is the fine result
+### Major file: `SiteAdj`, the `deltaSOCAdj` (t/ha, not crop specific) is the final delta SOC
 
 ```{r Data preparation}
 
@@ -71,11 +74,26 @@ SiteData <- SiteData %>%
 SiteData <- SiteData %>%
   inner_join(TotalCinput, by = c( "Ecodistrict" = "ECODISTRIC", "Province" = "Province_ID", "Year" = "YEAR"))
 
+
+#NA omit
+SiteData <- na.omit(SiteData)
+
+#Put dummy variables for soil texture and Eastern and Western Canada
+#We believe crops in Western and Eastern Canada are quite different and have different C/N that could influence delta SOC
+SiteData <- SiteData %>%
+mutate(TEXT = case_when(
+TEXCAT == "coarse" ~ 1,
+TEXCAT == "medium" ~ 2,
+TEXCAT == "fine" ~ 3,
+TRUE ~ 99)) %>%
+mutate(Region = case_when(
+Province %in% c("BC","AB","SK","MB") ~ 1,
+TRUE ~ 2))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Build model 
 
-
+### Linear model, Stepwise
 
 ```{r stepwise model}
 full_model <- lm(deltaSOC ~ .-Year -SiteName -Province - Ecodistrict - Area, data = SiteData)
@@ -84,8 +102,164 @@ summary(stepwise_model)
 cat("R² value: ", summary(stepwise_model)$r.squared, "\n")
 
 
-model <- lm(deltaSOC ~ MAP + TCLAY + CARB30 + Cinput, data = SiteData)
+model <- lm(deltaSOC ~ MAP + CARB30 + Cinput + TEXT + Region , data = SiteData)
 stepwise_model <- step(model, direction = "backward")
 summary(stepwise_model)
+
+```
+
+
+### Generalized additive model
+
+```{r Generalized additive model}
+# Fit a GAM model
+model_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(TEXT, k=5) + s(CARB30) + s(Region, k = 5), data = SiteData)
+model_gam_grow <- gam(deltaSOC ~ s(MAP) + s(MAT_grow) + s(MPE) + s(Cinput) + s(TCLAY) + s(TSAND) + s(CARB30), data = SiteData)
+
+# Summary of the model
+summary(model_gam) #R2 = 27.4
+summary(model_gam_grow) #R2 = 27.7
+
+```
+
+
+```{r model comparision}
+# AIC comparison
+AIC(model, model_gam) #barely different
+AIC(model_gam,model_gam_grow)#barely different
+```
+
+
+## Group data and redo the regression models
+
+In this part, we will group the data into three soil texture groups (Fine, Medium, Coarse),
+or C input (High, >64450 and low <= 64450), 
+or MAP (High >1000. low <= 1000 )
+
+
+### Soil textured group
+
+```{r Grouped model- Soil texture}
+#1. Soil texture group
+SiteData_Fine <- SiteData %>%
+  filter(TEXCAT == "fine")
+SiteData_Medium <- SiteData %>%
+  filter(TEXCAT == "medium")
+SiteData_Coarse <- SiteData %>%
+  filter(TEXCAT == "coarse")
+
+
+#Fit the regression models
+model_Fine <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Fine)
+stepwise_Fine <- step(model_Fine, direction = "backward")
+summary(stepwise_Fine) # R2 = 0.140
+
+model_Med <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Medium)
+stepwise_Med <- step(model_Med, direction = "backward")
+summary(stepwise_Med) #R2 = 0.184
+
+model_Coarse <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Coarse)
+stepwise_Coarse <- step(model_Coarse, direction = "backward")
+summary(stepwise_Coarse) #highest R2= 0.398
+
+
+#GAM 
+model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_Fine)
+summary(model_Fine_gam) #R2 = 0.183
+
+model_Med_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_Medium)
+summary(model_Med_gam) #R2 = 0.232
+
+model_Coarse_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_Coarse)
+summary(model_Coarse_gam) #R2 = 0.429
+
+```
+
+
+### C input group
+
+The C input ranges were determined by Q1, Q2, Q3, and Q4
+
+
+``` {r Grouped model - C input}
+#2. C input group
+SiteData_HighC <- SiteData %>%
+  filter(Cinput >= 248710 )
+SiteData_MHC <- SiteData %>% 
+  filter(Cinput >= 64450 & Cinput < 248710 ) #Medium high
+SiteData_MLC <- SiteData %>%
+  filter(Cinput <= 64450 & Cinput > 5020 ) #Medium low
+SiteData_LowC <- SiteData %>%
+  filter(Cinput <= 5020 )
+
+#Fit the regression models
+model_HighC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighC)
+stepwise_HighC <- step(model_HighC, direction = "backward")
+summary(stepwise_HighC) #R2 = 0.127
+
+model_MHC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MHC)
+stepwise_MHC <- step(model_MHC, direction = "backward")
+summary(stepwise_MHC) #R2 = 0.149
+
+model_MLC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MLC)
+stepwise_MLC <- step(model_MLC, direction = "backward")
+summary(stepwise_MLC) #R2 = 0.144
+
+model_LowC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowC)
+stepwise_LowC <- step(model_LowC, direction = "backward")
+summary(stepwise_LowC) # R2 = 0.299
+
+#GAM 
+model_HighC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_HighC)
+summary(model_HighC_gam) #R2 = 0.150
+
+model_MHC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MHC)
+summary(model_MHC_gam) #R2 = 0.189
+
+model_MLC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MLC)
+summary(model_MLC_gam) #R2 = 0.188
+
+model_LowC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowC)
+summary(model_LowC_gam) #R2 = 0.347
+
+```
+
+### MAP group
+
+The MAPs were determined arbitary
+
+
+```{r Group model - MAP}
+#3. MAP group
+SiteData_HighP <- SiteData %>%
+  filter(MAP > 1000 )
+SiteData_MedP <- SiteData %>%
+  filter(MAP > 500 & MAP <= 1000 )
+SiteData_LowP <- SiteData %>%
+  filter(MAP <= 500 )
+
+#Fit the regression models
+model_HighP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighP)
+stepwise_HighP <- step(model_HighP, direction = "backward")
+summary(stepwise_HighP) #R2 0.304
+
+model_MedP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MedP)
+stepwise_MedP <- step(model_MedP, direction = "backward")
+summary(stepwise_MedP) #R2 0.243
+
+model_LowP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowP)
+stepwise_LowP <- step(model_LowP, direction = "backward")
+summary(stepwise_LowP) #R2 = 0.114
+
+
+#GAM 
+model_HighP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_HighP)
+summary(model_HighP_gam) #R2 = 0.365
+
+model_MedP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MedP)
+summary(model_MedP_gam) #R2 = 0.291
+
+model_LowP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowP)
+summary(model_LowP_gam) #R2 = 0.151
 
 ```
