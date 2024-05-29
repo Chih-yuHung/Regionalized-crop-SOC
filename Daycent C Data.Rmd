@@ -263,3 +263,35 @@ model_LowP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30
 summary(model_LowP_gam) #R2 = 0.151
 
 ```
+
+
+## Make a Lookup table
+
+The look-up table include MAP, MAT, Soil Texture Class and C input
+Based on the regression results, I believe =
+
+
+```{r Lookup table }
+# Ensure TEXTCAT is a factor
+SiteData$TEXCAT <- as.factor(SiteData$TEXCAT)
+
+
+# Bin MAP
+SiteData$MAP_bin <- cut(SiteData$MAP, breaks = 4, labels = FALSE)
+# Bin MAT
+SiteData$MAT_bin <- cut(SiteData$MAT, breaks = 2, labels = FALSE)
+# Bin Cinput
+SiteData$Cinput_bin <- cut(SiteData$Cinput, breaks = 4, labels = FALSE)
+
+
+# Create lookup table
+lookup_table <- SiteData %>%
+  group_by(MAP_bin, MAT_bin, Cinput_bin, TEXCAT) %>%
+  summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
+            median_deltaSOC = median(deltaSOC, na.rm = TRUE),
+            sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
+            n = n()) %>%
+  ungroup()
+
+```
+
