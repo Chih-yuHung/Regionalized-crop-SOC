@@ -51,7 +51,7 @@ Weather <- Weather_y %>%
 #Prepare C input based on C input proportion and crop specific C input(t)
 TotalCinput <- Ecodc %>%
   group_by(ECODISTRIC, YEAR, Province_ID) %>%
-  summarise(Cinput = sum(CInput_withRootExudates_t))
+  summarise(Cinput = sum(CInput_withRootExudates_t)/sum(Corrected_Area))
 ```
 
 
@@ -75,8 +75,9 @@ SiteData <- SiteData %>%
   inner_join(TotalCinput, by = c( "Ecodistrict" = "ECODISTRIC", "Province" = "Province_ID", "Year" = "YEAR"))
 
 
-#NA omit
+#NA omit, there are some data has no soil texture categories. (TEXCAT = na)
 SiteData <- na.omit(SiteData)
+SiteData <- SiteData[!(SiteData$TEXCAT == "na"),]
 
 #Put dummy variables for soil texture and Eastern and Western Canada
 #We believe crops in Western and Eastern Canada are quite different and have different C/N that could influence delta SOC
@@ -89,6 +90,10 @@ TRUE ~ 99)) %>%
 mutate(Region = case_when(
 Province %in% c("BC","AB","SK","MB") ~ 1,
 TRUE ~ 2))
+
+
+#Save data
+#save(SiteData, file="Input/SiteData_Daycent.RData")
 ```
 
 ## Build model 
@@ -102,7 +107,7 @@ summary(stepwise_model)
 cat("R² value: ", summary(stepwise_model)$r.squared, "\n")
 
 
-model <- lm(deltaSOC ~ MAP + CARB30 + Cinput + TEXT + Region , data = SiteData)
+model <- lm(deltaSOC ~ MAP * CARB30 * Cinput * TEXT * Region , data = SiteData)
 stepwise_model <- step(model, direction = "backward")
 summary(stepwise_model)
 
@@ -113,20 +118,20 @@ summary(stepwise_model)
 
 ```{r Generalized additive model}
 # Fit a GAM model
-model_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(TEXT, k=5) + s(CARB30) + s(Region, k = 5), data = SiteData)
-model_gam_grow <- gam(deltaSOC ~ s(MAP) + s(MAT_grow) + s(MPE) + s(Cinput) + s(TCLAY) + s(TSAND) + s(CARB30), data = SiteData)
+#model_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(TEXT, k=5) + s(CARB30) + s(Region, k = 5), data = SiteData)
+#model_gam_grow <- gam(deltaSOC ~ s(MAP) + s(MAT_grow) + s(MPE) + s(Cinput) + s(TCLAY) + s(TSAND) + s(CARB30), data = SiteData)
 
 # Summary of the model
-summary(model_gam) #R2 = 27.4
-summary(model_gam_grow) #R2 = 27.7
+#summary(model_gam) #R2 = 27.4
+#summary(model_gam_grow) #R2 = 27.7
 
 ```
 
 
 ```{r model comparision}
 # AIC comparison
-AIC(model, model_gam) #barely different
-AIC(model_gam,model_gam_grow)#barely different
+#AIC(model, model_gam) #barely different
+#AIC(model_gam,model_gam_grow)#barely different
 ```
 
 
@@ -151,16 +156,19 @@ SiteData_Coarse <- SiteData %>%
 
 #Fit the regression models
 model_Fine <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Fine)
+#model_Fine <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Fine)
 stepwise_Fine <- step(model_Fine, direction = "backward")
-summary(stepwise_Fine) # R2 = 0.140
+summary(stepwise_Fine) # R2 = 0.1595 / 0.1906 (interactions)
 
 model_Med <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Medium)
+model_Med <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Medium)
 stepwise_Med <- step(model_Med, direction = "backward")
-summary(stepwise_Med) #R2 = 0.184
+summary(stepwise_Med) #R2 = 0.2167 / 0.2425 (interactions)
 
 model_Coarse <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Coarse)
+model_Coarse <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Coarse)
 stepwise_Coarse <- step(model_Coarse, direction = "backward")
-summary(stepwise_Coarse) #highest R2= 0.398
+summary(stepwise_Coarse) #highest R2= 0.446 /0.461 (interactions)
 
 
 #GAM 
@@ -183,14 +191,22 @@ The C input ranges were determined by Q1, Q2, Q3, and Q4
 
 ``` {r Grouped model - C input}
 #2. C input group
+summary(SiteData$Cinput)
 SiteData_HighC <- SiteData %>%
-  filter(Cinput >= 248710 )
+  filter(Cinput >= 3.11 )
 SiteData_MHC <- SiteData %>% 
-  filter(Cinput >= 64450 & Cinput < 248710 ) #Medium high
+  filter(Cinput >= 2.538 & Cinput < 3.11 ) #Medium high
 SiteData_MLC <- SiteData %>%
-  filter(Cinput <= 64450 & Cinput > 5020 ) #Medium low
+  filter(Cinput <= 2.538 & Cinput > 2.1  ) #Medium low
 SiteData_LowC <- SiteData %>%
-  filter(Cinput <= 5020 )
+  filter(Cinput <= 2.1 )
+
+SiteData_Clow <- SiteData %>%
+  filter( CARB30 > 6250  ) #Medium low
+SiteData_Chigh <- SiteData %>%
+  filter(CARB30 <= 6250 )
+
+
 
 #Fit the regression models
 model_HighC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighC)
@@ -199,11 +215,11 @@ summary(stepwise_HighC) #R2 = 0.127
 
 model_MHC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MHC)
 stepwise_MHC <- step(model_MHC, direction = "backward")
-summary(stepwise_MHC) #R2 = 0.149
+summary(stepwise_MHC) #R2 = 0.148
 
 model_MLC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MLC)
 stepwise_MLC <- step(model_MLC, direction = "backward")
-summary(stepwise_MLC) #R2 = 0.144
+summary(stepwise_MLC) #R2 = 0.134
 
 model_LowC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowC)
 stepwise_LowC <- step(model_LowC, direction = "backward")
@@ -214,10 +230,10 @@ model_HighC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB3
 summary(model_HighC_gam) #R2 = 0.150
 
 model_MHC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MHC)
-summary(model_MHC_gam) #R2 = 0.189
+summary(model_MHC_gam) #R2 = 0.188
 
 model_MLC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MLC)
-summary(model_MLC_gam) #R2 = 0.188
+summary(model_MLC_gam) #R2 = 0.179
 
 model_LowC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowC)
 summary(model_LowC_gam) #R2 = 0.347
@@ -274,24 +290,55 @@ Based on the regression results, I believe =
 ```{r Lookup table }
 # Ensure TEXTCAT is a factor
 SiteData$TEXCAT <- as.factor(SiteData$TEXCAT)
+SiteData<-na.omit(SiteData)
 
+# Separate to Eastern and Western Canada
+SiteData_West <- SiteData[SiteData$Region == 1, ]
+SiteData_East <- SiteData[SiteData$Region == 2, ]
 
+#Bin for West part
 # Bin MAP
-SiteData$MAP_bin <- cut(SiteData$MAP, breaks = 4, labels = FALSE)
+SiteData_West$MAP_bin <- cut(SiteData_West$MAP, breaks = 2, labels = FALSE)
 # Bin MAT
-SiteData$MAT_bin <- cut(SiteData$MAT, breaks = 2, labels = FALSE)
+SiteData_West$MAT_bin <- cut(SiteData_West$MAT, breaks = 2, labels = FALSE)
 # Bin Cinput
-SiteData$Cinput_bin <- cut(SiteData$Cinput, breaks = 4, labels = FALSE)
+SiteData_West$Cinput_bin <- cut(SiteData_West$Cinput, breaks = 2, labels = FALSE)
+# Bin initial C
+SiteData_West$CARB30_bin <- cut(SiteData_West$CARB30, breaks = 2, labels = FALSE)
 
-
-# Create lookup table
-lookup_table <- SiteData %>%
-  group_by(MAP_bin, MAT_bin, Cinput_bin, TEXCAT) %>%
+# Create lookup table_West
+lookuptable_West <- SiteData_West %>%
+  group_by(TEXCAT, MAP_bin, MAT_bin, Cinput_bin, CARB30_bin) %>%
   summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
             median_deltaSOC = median(deltaSOC, na.rm = TRUE),
             sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
             n = n()) %>%
   ungroup()
+
+#Bin for East part
+# Bin MAP
+SiteData_East$MAP_bin <- cut(SiteData_East$MAP, breaks = 2, labels = FALSE)
+# Bin MAT
+SiteData_East$MAT_bin <- cut(SiteData_East$MAT, breaks = 2, labels = FALSE)
+# Bin Cinput
+SiteData_East$Cinput_bin <- cut(SiteData_East$Cinput, breaks = 2, labels = FALSE)
+# Bin initial C
+SiteData_East$CARB30_bin <- cut(SiteData_East$CARB30, breaks = 2, labels = FALSE)
+
+# Create lookup table_East
+lookuptable_East <- SiteData_East %>%
+  group_by(TEXCAT, MAP_bin, MAT_bin, Cinput_bin, CARB30_bin) %>%
+  summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
+            median_deltaSOC = median(deltaSOC, na.rm = TRUE),
+            sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
+            n = n()) %>%
+  ungroup()
+
+
+#Write the csv files
+write.csv(lookuptable_West,"output/lookuptable_West.csv")
+write.csv(lookuptable_East,"output/lookuptable_East.csv")
+
 
 ```
 
