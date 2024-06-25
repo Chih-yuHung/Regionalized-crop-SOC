@@ -1,0 +1,28 @@
+---
+title: "SOC change C input_CA"
+author: "Dr. Chih-Yu Hung"
+date: "2024-06-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+load(file="Input/SiteData_Daycent.RData")
+DeltaC <- SiteData %>%
+  select(Year,SiteName, Province,Ecodistrict, Area, deltaSOC)
+
+# C input crop specific 
+Ecodc <- read.csv("Input/CropC_Daycent/ecodcinputbycrop.csv") %>%
+         select(ECODISTRIC, YEAR, CROPS, Province_ID, CInput_withRootExudates_t,Corrected_Area) %>% 
+         filter(YEAR >= 1990) %>%
+         filter(CROPS %in% c("BARLEY", "CANOLA","CORNSLG","CORNGR","RYEFAL","RYESPG","SOYBNS","SUGARB", "WHTDUR","WHTSPG","WHTWINT","DFPEAS","TRITCL", ))
+
+
+Test <- Ecodc %>%
+    filter(Province_ID == "AB", YEAR == "1990", ECODISTRIC == "244")
+
+Test1 <- DeltaC %>%
+    filter(Province == "AB", Year == "1990", Ecodistrict == "244")
+```
+
