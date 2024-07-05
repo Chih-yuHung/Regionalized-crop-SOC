@@ -1,0 +1,75 @@
+---
+title: "SOC change C input_CA"
+author: "Dr. Chih-Yu Hung"
+date: "2024-07-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(polycor)
+library(mgcv)
+library(caret)
+library(zoo)
+library(gridExtra)
+```
+
+
+### Predict the delta C with the GAMs
+
+```{r predict}
+#Load the Prepared 5y avg data
+load("Input/Data_GAM_Fine.RData")
+load("Input/Data_GAM_Medium.RData")
+load("Input/Data_GAM_Coarse.RData")
+
+
+#Load the GAM models
+load("Output/GAM model_Fine.RData")
+load("Output/GAM model_Medium.RData")
+load("Output/GAM model_Coarse.RData")
+
+#Apply the GAMs, 1000 for converting to kg C /ha
+Data_GAM_Fine$predict <- predict(model_Fine_gam, newdata = Data_GAM_Fine) *1000
+Data_GAM_Medium$predict <- predict(model_Medium_gam, newdata = Data_GAM_Medium) *1000
+Data_GAM_Coarse$predict <- predict(model_Coarse_gam, newdata = Data_GAM_Coarse) *1000
+
+
+#Obtain the weighted mean values for the provinces
+Result_Fine <- Data_GAM_Fine %>%
+  mutate(predict.w = Cinput * predict) %>%
+  group_by(Province) %>%
+  summarise(DeltaSOC_Fine = sum(predict.w)/sum(Cinput))
+
+Result_Medium <- Data_GAM_Medium %>%
+  mutate(predict.w = Cinput * predict) %>%
+  group_by(Province) %>%
+  summarise(DeltaSOC_Medium = sum(predict.w)/sum(Cinput))
+
+Result_Coarse <- Data_GAM_Coarse %>%
+  mutate(predict.w = Cinput * predict) %>%
+  group_by(Province) %>%
+  summarise(DeltaSOC_Coarse = sum(predict.w)/sum(Cinput))
+
+#Incorporate them and have a output table
+Result <- Result_Coarse %>%
+  full_join(Result_Medium, by = "Province") %>%
+  full_join(Result_Fine, by = "Province")
+
+
+#Output the table
+#write.csv(Result,file="Output/SOC_C input.csv")
+
+#Summary for the report
+summary(Result) #provide avg. based on province
+
+
+#Avg. based on ecodistrict
+mean(Data_GAM_Fine$predict) #126.6
+mean(Data_GAM_Medium$predict) #129.0
+mean(Data_GAM_Coarse$predict) #121.9
+
+
+```
+

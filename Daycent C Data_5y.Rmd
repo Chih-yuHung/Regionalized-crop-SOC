@@ -12,99 +12,9 @@ library(polycor)
 library(mgcv)
 library(caret)
 library(zoo)
-
+library(gridExtra)
 ```
 
-## Daycent data preparation
-
-Canada’s NIR have estimate annual ΔSOC at ecodistrict level. According to Thiagarajan et al., (2022), ΔSOC have a strong relationship with site specific variables and C inputs. We therefore propose to build a regression model to predict ΔSOC. The regression model could have variables including mean annual precipitation, mean air temperature, mean temperature in growing seasons, C input, initial C stock, and soil texture. 
-
-This document organized the data from AAFC (ElKhoury, Antoun (AAFC/AAC) <antoun.elkhoury@AGR.GC.CA>).
-Files include:
-
-1) CinputsAtEcodprov_19Oct2023: the ecodistrict C input used for the model run.
-2) ecodcinputbycrop:            the cinput values by crop after adjustment for residue removal.
-3) EcoProvTexSites:             the carbon initialization values (note carbon data is in g/m2).
-4) SiteAdjDelta_19Oct2023:      the inventory delta C output from 1990 to 2022.
-5) slyieldadj19102023:          the adjusted yield data used for the model run.
-6) weather_master:              the climate file.
-
-```{r Loading data}
-Cinput    <- read.csv("Input/CropC_Daycent/CinputsAtEcodprov_19Oct2023.csv") #C input proportion not crop specific
-Ecodc     <- read.csv("Input/CropC_Daycent/ecodcinputbycrop.csv") # C input crop specific 
-EcoP      <- read.csv("Input/CropC_Daycent/EcoProvTexSites.csv") # C ini values
-SiteAdj   <- read.csv("Input/CropC_Daycent/SiteAdjDelta_19Oct2023.csv") # Delta C not crop specific
-Slyield   <- read.csv("Input/CropC_Daycent/slyieldadj19102023.csv") # yield data, no need
-Weather_y <- read.csv("Input/CropC_Daycent/weather_master.csv") #weahter
-
-#prepare weather data from monthly to yearly, the table will have
-#Ecodistrict, MAP, MAT, MAP_grow, MAP_grow, MPE(mean potential evapotranspiration) and MPE_grow. The _grow means average values in May-Oct. 
-
-grow <- c(5:10) #Define growing season in May-Oct
-Weather <- Weather_y %>%
-  select(Ecodistrict = ECODISTRIC, month, pe, precip, temp) %>%
-  group_by(Ecodistrict) %>%
-  summarise(MAP = sum(precip),MAT = mean(temp),MPE = sum(pe),
-            MAP_grow = sum(precip[month %in% grow]),
-            MAT_grow = mean(temp[month %in% grow]),
-            MPE_grow = sum(pe[month %in% grow]))
-                           
-#Prepare C input based on C input proportion and crop specific C input(t)
-TotalCinput <- Ecodc %>%
-  group_by(ECODISTRIC, YEAR, Province_ID) %>%
-  summarise(Cinput = sum(CInput_withRootExudates_t)/sum(Corrected_Area))
-```
-
-
-## Making Dataframe, prepare for model_Use the Avg. 5 y data only
-
-### Major file: `SiteAdj`, the `deltaSOCAdj` (t/ha, not crop specific) is the final delta SOC
-
-```{r Data preparation}
-
-SiteData <- SiteAdj %>%
-  select(Year = year, SiteName, Province = Province_ID, Ecodistrict = ECODISTRIC, Area = Area_per_site_Ha, deltaSOC = deltaSOCAdj )
-
-#join the weather data
-SiteData <- SiteData %>%
-  inner_join(Weather, by = c("Ecodistrict" = "Ecodistrict" )) %>%
-  inner_join(EcoP, by = c("Ecodistrict" =  "ECODISTRIC", "Province" = "PROVINCE","SiteName" = "sitename"))
-  
-
-#join the Cinput
-SiteData <- SiteData %>%
-  inner_join(TotalCinput, by = c( "Ecodistrict" = "ECODISTRIC", "Province" = "Province_ID", "Year" = "YEAR"))
-
-
-#NA omit, there are some data has no soil texture categories. (TEXCAT = na)
-SiteData <- na.omit(SiteData)
-SiteData <- SiteData[!(SiteData$TEXCAT == "na"),]
-
-#Put dummy variables for soil texture and Eastern and Western Canada
-#We believe crops in Western and Eastern Canada are quite different and have different C/N that could influence delta SOC
-SiteData <- SiteData %>%
-mutate(TEXT = case_when(
-TEXCAT == "coarse" ~ 1,
-TEXCAT == "medium" ~ 2,
-TEXCAT == "fine" ~ 3,
-TRUE ~ 99)) %>%
-mutate(Region = case_when(
-Province %in% c("BC","AB","SK","MB") ~ 1,
-TRUE ~ 2))
-
-
-#Take the avg. for the moving avg. 5 yr. 
-SiteData_5y <- SiteData %>%
-  group_by(SiteName) %>%
-  select(SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput, TEXT, Region) %>%
-  mutate(deltaSOC = rollmean(deltaSOC, k = 5, fill= NA, align = "right")) %>%
-  mutate(Cinput = rollmean(Cinput, k = 5, fill= NA, align = "right")) %>%
-  na.omit()
-
-
-#Save data
-#save(SiteData_5y, file="Input/SiteData_Daycent_5y.RData")
-```
 
 ## Build model 
 
@@ -115,6 +25,8 @@ SiteData_5y <- SiteData %>%
 #stepwise_model <- step(full_model, direction = "backward")
 #summary(stepwise_model)
 #cat("R² value: ", summary(stepwise_model)$r.squared, "\n")
+
+load("Input/SiteData_Daycent_5y.RData")
 
 SiteData <- SiteData_5y
 
@@ -150,11 +62,9 @@ summary(stepwise_model)
 ## Group data and redo the regression models
 
 In this part, we will group the data into three soil texture groups (Fine, Medium, Coarse),
-or C input (High, >64450 and low <= 64450), 
-or MAP (High >1000. low <= 1000 )
 
 
-### Soil textured group
+### Soil textured group-prepare train-test split
 
 ```{r Grouped model- Soil texture}
 #1. Soil texture group
@@ -167,134 +77,226 @@ SiteData_Coarse <- SiteData %>%
   filter(TEXT == 1)
 
 
-#Fit the regression models
-model_Fine <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Fine)
-#model_Fine <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Fine)
-stepwise_Fine <- step(model_Fine, direction = "backward")
-summary(stepwise_Fine) # R2 = 0.451
+#Set the train-test split
+set.seed(2024)
 
-model_Med <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Medium)
-model_Med <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Medium)
-stepwise_Med <- step(model_Med, direction = "backward")
-summary(stepwise_Med) #R2 = 0.545
+trainId_Fine <- createDataPartition(SiteData_Fine$deltaSOC, p = 0.8, list = FALSE)
+trainId_Medium <- createDataPartition(SiteData_Medium$deltaSOC, p = 0.8, list = FALSE)
+trainId_Coarse <- createDataPartition(SiteData_Coarse$deltaSOC, p = 0.8, list = FALSE)
 
-model_Coarse <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Coarse)
-model_Coarse <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Coarse)
-stepwise_Coarse <- step(model_Coarse, direction = "backward")
-summary(stepwise_Coarse) #highest R2= 0.737
+trainFine <- SiteData_Fine[trainId_Fine,]
+trainMedium <- SiteData_Medium[trainId_Medium,]
+trainCoarse <- SiteData_Coarse[trainId_Coarse,]
 
-
-#GAM 
-model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_Fine)
-summary(model_Fine_gam) #R2 = 0.664
-
-model_Med_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_Medium)
-summary(model_Med_gam) #R2 = 0.657
-
-model_Coarse_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30) , data = SiteData_Coarse)
-summary(model_Coarse_gam) #R2 = 0.787
+testFine <- SiteData_Fine[-trainId_Fine,]
+testMedium <- SiteData_Medium[-trainId_Medium,]
+testCoarse <- SiteData_Coarse[-trainId_Coarse,]
 
 ```
 
 
-### C input group
+### Soil textured group- regression for the training group
+
+```{r regression model for soil texture groups}
+## Going to use GAM model only
+# #Fit the regression models
+# model_Fine <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Fine)
+# #model_Fine <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Fine)
+# stepwise_Fine <- step(model_Fine, direction = "backward")
+# summary(stepwise_Fine) # R2 = 0.451
+# 
+# model_Med <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Medium)
+# model_Med <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Medium)
+# stepwise_Med <- step(model_Med, direction = "backward")
+# summary(stepwise_Med) #R2 = 0.545
+# 
+# model_Coarse <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Coarse)
+# model_Coarse <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Coarse)
+# stepwise_Coarse <- step(model_Coarse, direction = "backward")
+# summary(stepwise_Coarse) #highest R2= 0.737
+
+
+#GAM for training set
+model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = trainFine)
+summary(model_Fine_gam) #R2 = 0.668
+
+model_Medium_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = trainMedium)
+summary(model_Medium_gam) #R2 = 0.658
+
+model_Coarse_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30) , data = trainCoarse)
+summary(model_Coarse_gam) #R2 = 0.782
+
+#Save the GAM models
+# save(model_Fine_gam,file = "Output/GAM model_Fine.RData")
+# save(model_Medium_gam,file = "Output/GAM model_Medium.RData")
+# save(model_Coarse_gam,file = "Output/GAM model_Coarse.RData")
+
+
+#predict delta SOC with test data
+predict_Fine <- predict(model_Fine_gam, newdata = testFine)
+predict_Medium <- predict(model_Medium_gam, newdata = testMedium)
+predict_Coarse <- predict(model_Coarse_gam, newdata = testCoarse)
+
+
+#Compare the predictions and actual values by using Mean square error (MSE)
+MSE_Fine <- mean((predict_Fine-testFine$deltaSOC)^2)        # 0.0057 t/ha
+MSE_Medium <- mean((predict_Medium-testMedium$deltaSOC)^2)  # 0.0040 t/ha
+MSE_Coarse <- mean((predict_Coarse-testCoarse$deltaSOC)^2)  # 0.0018 t/ha
+
+#Compare the predictions and actual values by using R2
+R_squared <- function(actuals, predictions) {
+  ss_res <- sum((actuals - predictions)^2)
+  ss_tot <- sum((actuals - mean(actuals))^2)
+  r_squared <- 1 - (ss_res / ss_tot)
+  return(r_squared)
+}
+
+R2_Fine <- R_squared(predict_Fine, testFine$deltaSOC) #0.47
+R2_Medium <- R_squared(predict_Medium, testMedium$deltaSOC) #0.48
+R2_Coarse <- R_squared(predict_Coarse, testCoarse$deltaSOC) #0.76
+
+
+#Compare the predictions and actual values by mean absolute percentage error (MAPE)
+MAPE_Fine <- mean(abs(testFine$deltaSOC-predict_Fine)/testFine$deltaSOC)*100            #24.7%
+MAPE_Medium <- mean(abs(testMedium$deltaSOC-predict_Medium)/testMedium$deltaSOC)*100    #9.1%
+MAPE_Coarse <- mean(abs(testCoarse$deltaSOC-predict_Coarse)/testCoarse$deltaSOC)*100    #29.7%
+
+```
+
+
+### Plot the preidictions and actual data
+
+```{r Plot the data, fig.height = 9}
+plot_Fine <- data.frame(actuals = testFine$deltaSOC, predictions = predict_Fine)
+plot_Medium <- data.frame(actuals = testMedium$deltaSOC, predictions = predict_Medium)
+plot_Coarse <- data.frame(actuals = testCoarse$deltaSOC, predictions = predict_Coarse)
+
+plot_comp <- function(plot_data) {
+mse <- mean((plot_data$predictions-plot_data$actual)^2)
+mape <- mean(abs(plot_data$actuals-plot_data$predictions)/plot_data$actuals)*100 
+dataset_name <- deparse(substitute(plot_data))
+ggplot(plot_data, aes(x = actuals, y = predictions)) +
+  geom_point(color = 'blue') +                                # Scatter plot of actual vs. predicted
+  geom_abline(slope = 1, intercept = 0, color = 'red', linetype = 'dashed') + # 1:1 line
+  labs(title = paste('Actual vs Predicted Values for', dataset_name),      # Add title and labels
+       x = 'Actual Values (tC /ha)',
+       y = 'Predicted Values (tC /ha)') +
+  theme_minimal() +
+  annotate("text", x = 0, y = Inf, label = paste("MSE:", round(mse, 4),"t C/ha"), 
+           hjust = 1.1, vjust = 2, size = 5, color = "black") + # Add MSE annotation
+  annotate("text", x = 0, y = Inf, label = paste("MAPE:", round(mape, 2), "%"), 
+           hjust = 1.1, vjust = 3.5, size = 5, color = "black") # Add MAPE annotation
+  
+}
+
+plot_F <- plot_comp(plot_Fine)
+plot_M <- plot_comp(plot_Medium)
+plot_C <- plot_comp(plot_Coarse)
+
+grid.arrange(plot_F,plot_M,plot_C, heights = unit(c(3,3,3), "inches"))
+
+
+```
+
+
+### C input group (Obsolete).
 
 The C input ranges were determined by Q1, Q2, Q3, and Q4
 
 
 ``` {r Grouped model - C input}
 #2. C input group
-summary(SiteData$Cinput)
-SiteData_HighC <- SiteData %>%
-  filter(Cinput >= 3.11 )
-SiteData_MHC <- SiteData %>% 
-  filter(Cinput >= 2.538 & Cinput < 3.11 ) #Medium high
-SiteData_MLC <- SiteData %>%
-  filter(Cinput <= 2.538 & Cinput > 2.1  ) #Medium low
-SiteData_LowC <- SiteData %>%
-  filter(Cinput <= 2.1 )
-
-SiteData_Clow <- SiteData %>%
-  filter( CARB30 > 6250  ) #Medium low
-SiteData_Chigh <- SiteData %>%
-  filter(CARB30 <= 6250 )
+# summary(SiteData$Cinput)
+# SiteData_HighC <- SiteData %>%
+#   filter(Cinput >= 3.11 )
+# SiteData_MHC <- SiteData %>% 
+#   filter(Cinput >= 2.538 & Cinput < 3.11 ) #Medium high
+# SiteData_MLC <- SiteData %>%
+#   filter(Cinput <= 2.538 & Cinput > 2.1  ) #Medium low
+# SiteData_LowC <- SiteData %>%
+#   filter(Cinput <= 2.1 )
+# 
+# SiteData_Clow <- SiteData %>%
+#   filter( CARB30 > 6250  ) #Medium low
+# SiteData_Chigh <- SiteData %>%
+#   filter(CARB30 <= 6250 )
 
 
 
 #Fit the regression models
-model_HighC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighC)
-stepwise_HighC <- step(model_HighC, direction = "backward")
-summary(stepwise_HighC) #R2 = 0.554
-
-model_MHC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MHC)
-stepwise_MHC <- step(model_MHC, direction = "backward")
-summary(stepwise_MHC) #R2 = 0.410
-
-model_MLC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MLC)
-stepwise_MLC <- step(model_MLC, direction = "backward")
-summary(stepwise_MLC) #R2 = 0.392
-
-model_LowC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowC)
-stepwise_LowC <- step(model_LowC, direction = "backward")
-summary(stepwise_LowC) # R2 = 0.421
+# model_HighC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighC)
+# stepwise_HighC <- step(model_HighC, direction = "backward")
+# summary(stepwise_HighC) #R2 = 0.554
+# 
+# model_MHC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MHC)
+# stepwise_MHC <- step(model_MHC, direction = "backward")
+# summary(stepwise_MHC) #R2 = 0.410
+# 
+# model_MLC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MLC)
+# stepwise_MLC <- step(model_MLC, direction = "backward")
+# summary(stepwise_MLC) #R2 = 0.392
+# 
+# model_LowC <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowC)
+# stepwise_LowC <- step(model_LowC, direction = "backward")
+# summary(stepwise_LowC) # R2 = 0.421
 
 #GAM 
-model_HighC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_HighC)
-summary(model_HighC_gam) #R2 = 0.700
-
-model_MHC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MHC)
-summary(model_MHC_gam) #R2 = 0.615
-
-model_MLC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MLC)
-summary(model_MLC_gam) #R2 = 0.617
-
-model_LowC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowC)
-summary(model_LowC_gam) #R2 = 0.598
+# model_HighC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_HighC)
+# summary(model_HighC_gam) #R2 = 0.700
+# 
+# model_MHC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MHC)
+# summary(model_MHC_gam) #R2 = 0.615
+# 
+# model_MLC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MLC)
+# summary(model_MLC_gam) #R2 = 0.617
+# 
+# model_LowC_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowC)
+# summary(model_LowC_gam) #R2 = 0.598
 
 ```
 
-### MAP group
+### MAP group (Obsolete)
 
 The MAPs were determined arbitary
 
 
 ```{r Group model - MAP}
 #3. MAP group
-SiteData_HighP <- SiteData %>%
-  filter(MAP > 1000 )
-SiteData_MedP <- SiteData %>%
-  filter(MAP > 500 & MAP <= 1000 )
-SiteData_LowP <- SiteData %>%
-  filter(MAP <= 500 )
+# SiteData_HighP <- SiteData %>%
+#   filter(MAP > 1000 )
+# SiteData_MedP <- SiteData %>%
+#   filter(MAP > 500 & MAP <= 1000 )
+# SiteData_LowP <- SiteData %>%
+#   filter(MAP <= 500 )
 
 #Fit the regression models
-model_HighP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighP)
-stepwise_HighP <- step(model_HighP, direction = "backward")
-summary(stepwise_HighP) #R2 0.534
-
-model_MedP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MedP)
-stepwise_MedP <- step(model_MedP, direction = "backward")
-summary(stepwise_MedP) #R2 0.543
-
-model_LowP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowP)
-stepwise_LowP <- step(model_LowP, direction = "backward")
-summary(stepwise_LowP) #R2 = 0.529
+# model_HighP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_HighP)
+# stepwise_HighP <- step(model_HighP, direction = "backward")
+# summary(stepwise_HighP) #R2 0.534
+# 
+# model_MedP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_MedP)
+# stepwise_MedP <- step(model_MedP, direction = "backward")
+# summary(stepwise_MedP) #R2 0.543
+# 
+# model_LowP <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_LowP)
+# stepwise_LowP <- step(model_LowP, direction = "backward")
+# summary(stepwise_LowP) #R2 = 0.529
 
 
 #GAM 
-model_HighP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_HighP)
-summary(model_HighP_gam) #R2 = 0.692
-
-model_MedP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MedP)
-summary(model_MedP_gam) #R2 = 0.684
-
-model_LowP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowP)
-summary(model_LowP_gam) #R2 = 0.678
+# model_HighP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_HighP)
+# summary(model_HighP_gam) #R2 = 0.692
+# 
+# model_MedP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_MedP)
+# summary(model_MedP_gam) #R2 = 0.684
+# 
+# model_LowP_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = SiteData_LowP)
+# summary(model_LowP_gam) #R2 = 0.678
 
 ```
 
 
-## Make a Lookup table
+## Make a Lookup table (Obsolete)
 ## Abandoned for moving average analysis
 The look-up table include MAP, MAT, Soil Texture Class and C input
 Based on the regression results, I believe =
@@ -302,50 +304,50 @@ Based on the regression results, I believe =
 
 ```{r Lookup table }
 # Ensure TEXT is a factor
-SiteData$TEXT <- as.factor(SiteData$TEXT)
-SiteData<-na.omit(SiteData)
+# SiteData$TEXT <- as.factor(SiteData$TEXT)
+# SiteData<-na.omit(SiteData)
 
 # Separate to Eastern and Western Canada
-SiteData_West <- SiteData[SiteData$Region == 1, ]
-SiteData_East <- SiteData[SiteData$Region == 2, ]
+# SiteData_West <- SiteData[SiteData$Region == 1, ]
+# SiteData_East <- SiteData[SiteData$Region == 2, ]
 
 #Bin for West part
 # Bin MAP
-SiteData_West$MAP_bin <- cut(SiteData_West$MAP, breaks = 2, labels = FALSE)
+# SiteData_West$MAP_bin <- cut(SiteData_West$MAP, breaks = 2, labels = FALSE)
 # Bin MAT
-SiteData_West$MAT_bin <- cut(SiteData_West$MAT, breaks = 2, labels = FALSE)
+# SiteData_West$MAT_bin <- cut(SiteData_West$MAT, breaks = 2, labels = FALSE)
 # Bin Cinput
-SiteData_West$Cinput_bin <- cut(SiteData_West$Cinput, breaks = 2, labels = FALSE)
+# SiteData_West$Cinput_bin <- cut(SiteData_West$Cinput, breaks = 2, labels = FALSE)
 # Bin initial C
-SiteData_West$CARB30_bin <- cut(SiteData_West$CARB30, breaks = 2, labels = FALSE)
+# SiteData_West$CARB30_bin <- cut(SiteData_West$CARB30, breaks = 2, labels = FALSE)
 
 # Create lookup table_West
-lookuptable_West <- SiteData_West %>%
-  group_by(TEXT, MAP_bin, MAT_bin, Cinput_bin, CARB30_bin) %>%
-  summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
-            median_deltaSOC = median(deltaSOC, na.rm = TRUE),
-            sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
-            n = n()) %>%
-  ungroup()
+# lookuptable_West <- SiteData_West %>%
+#   group_by(TEXT, MAP_bin, MAT_bin, Cinput_bin, CARB30_bin) %>%
+#   summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
+#             median_deltaSOC = median(deltaSOC, na.rm = TRUE),
+#             sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
+#             n = n()) %>%
+#   ungroup()
 
 #Bin for East part
 # Bin MAP
-SiteData_East$MAP_bin <- cut(SiteData_East$MAP, breaks = 2, labels = FALSE)
+# SiteData_East$MAP_bin <- cut(SiteData_East$MAP, breaks = 2, labels = FALSE)
 # Bin MAT
-SiteData_East$MAT_bin <- cut(SiteData_East$MAT, breaks = 2, labels = FALSE)
+# SiteData_East$MAT_bin <- cut(SiteData_East$MAT, breaks = 2, labels = FALSE)
 # Bin Cinput
-SiteData_East$Cinput_bin <- cut(SiteData_East$Cinput, breaks = 2, labels = FALSE)
+# SiteData_East$Cinput_bin <- cut(SiteData_East$Cinput, breaks = 2, labels = FALSE)
 # Bin initial C
-SiteData_East$CARB30_bin <- cut(SiteData_East$CARB30, breaks = 2, labels = FALSE)
+# SiteData_East$CARB30_bin <- cut(SiteData_East$CARB30, breaks = 2, labels = FALSE)
 
 # Create lookup table_East
-lookuptable_East <- SiteData_East %>%
-  group_by(TEXT, MAP_bin, MAT_bin, Cinput_bin, CARB30_bin) %>%
-  summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
-            median_deltaSOC = median(deltaSOC, na.rm = TRUE),
-            sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
-            n = n()) %>%
-  ungroup()
+# lookuptable_East <- SiteData_East %>%
+  # group_by(TEXT, MAP_bin, MAT_bin, Cinput_bin, CARB30_bin) %>%
+  # summarize(mean_deltaSOC = mean(deltaSOC, na.rm = TRUE),
+  #           median_deltaSOC = median(deltaSOC, na.rm = TRUE),
+  #           sd_deltaSOC = sd(deltaSOC, na.rm = TRUE),
+  #           n = n()) %>%
+  # ungroup()
 
 
 #Write the csv files

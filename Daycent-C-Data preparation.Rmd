@@ -1,0 +1,150 @@
+---
+title: "Daycent C Data preparation"
+author: "Dr. Chih-Yu Hung"
+date: "2024-07-04"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(polycor)
+library(mgcv)
+library(caret)
+library(zoo)
+library(gridExtra)
+```
+
+## Daycent data preparation
+
+Canada’s NIR have estimate annual ΔSOC at ecodistrict level. According to Thiagarajan et al., (2022), ΔSOC have a strong relationship with site specific variables and C inputs. We therefore propose to build a regression model to predict ΔSOC. The regression model could have variables including mean annual precipitation, mean air temperature, mean temperature in growing seasons, C input, initial C stock, and soil texture. 
+
+This document organized the data from AAFC (ElKhoury, Antoun (AAFC/AAC) <antoun.elkhoury@AGR.GC.CA>).
+Files include:
+
+1) CinputsAtEcodprov_19Oct2023: the ecodistrict C input used for the model run.
+2) ecodcinputbycrop:            the cinput values by crop after adjustment for residue removal.
+3) EcoProvTexSites:             the carbon initialization values (note carbon data is in g/m2).
+4) SiteAdjDelta_19Oct2023:      the inventory delta C output from 1990 to 2022.
+5) slyieldadj19102023:          the adjusted yield data used for the model run.
+6) weather_master:              the climate file.
+
+```{r Loading data}
+Cinput    <- read.csv("Input/CropC_Daycent/CinputsAtEcodprov_19Oct2023.csv") #C input proportion not crop specific
+Ecodc     <- read.csv("Input/CropC_Daycent/ecodcinputbycrop.csv") # C input crop specific 
+EcoP      <- read.csv("Input/CropC_Daycent/EcoProvTexSites.csv") # C ini values
+SiteAdj   <- read.csv("Input/CropC_Daycent/SiteAdjDelta_19Oct2023.csv") # Delta C not crop specific
+Slyield   <- read.csv("Input/CropC_Daycent/slyieldadj19102023.csv") # yield data, no need
+Weather_y <- read.csv("Input/CropC_Daycent/weather_master.csv") #weahter
+
+#prepare weather data from monthly to yearly, the table will have
+#Ecodistrict, MAP, MAT, MAP_grow, MAP_grow, MPE(mean potential evapotranspiration) and MPE_grow. The _grow means average values in May-Oct. 
+
+grow <- c(5:10) #Define growing season in May-Oct
+Weather <- Weather_y %>%
+  select(Ecodistrict = ECODISTRIC, month, pe, precip, temp) %>%
+  group_by(Ecodistrict) %>%
+  summarise(MAP = sum(precip),MAT = mean(temp),MPE = sum(pe),
+            MAP_grow = sum(precip[month %in% grow]),
+            MAT_grow = mean(temp[month %in% grow]),
+            MPE_grow = sum(pe[month %in% grow]))
+                           
+#Prepare C input based on C input proportion and crop specific C input(t)
+TotalCinput <- Ecodc %>%
+  group_by(ECODISTRIC, YEAR, Province_ID) %>%
+  summarise(Cinput = sum(CInput_withRootExudates_t)/sum(Corrected_Area))
+```
+
+
+## Making Dataframe, prepare for model_Use the Avg. 5 y data only
+
+### Major file: `SiteAdj`, the `deltaSOCAdj` (t/ha, not crop specific) is the final delta SOC
+
+```{r Data preparation}
+
+SiteData <- SiteAdj %>%
+  select(Year = year, SiteName, Province = Province_ID, Ecodistrict = ECODISTRIC, Area = Area_per_site_Ha, deltaSOC = deltaSOCAdj )
+
+#join the weather data
+SiteData <- SiteData %>%
+  inner_join(Weather, by = c("Ecodistrict" = "Ecodistrict" )) %>%
+  inner_join(EcoP, by = c("Ecodistrict" =  "ECODISTRIC", "Province" = "PROVINCE","SiteName" = "sitename"))
+  
+
+#join the Cinput
+SiteData <- SiteData %>%
+  inner_join(TotalCinput, by = c( "Ecodistrict" = "ECODISTRIC", "Province" = "Province_ID", "Year" = "YEAR"))
+
+
+#NA omit, there are some data has no soil texture categories. (TEXCAT = na)
+SiteData <- na.omit(SiteData)
+SiteData <- SiteData[!(SiteData$TEXCAT == "na"),]
+
+#Put dummy variables for soil texture and Eastern and Western Canada
+#We believe crops in Western and Eastern Canada are quite different and have different C/N that could influence delta SOC
+SiteData <- SiteData %>%
+mutate(TEXT = case_when(
+TEXCAT == "coarse" ~ 1,
+TEXCAT == "medium" ~ 2,
+TEXCAT == "fine" ~ 3,
+TRUE ~ 99)) %>%
+mutate(Region = case_when(
+Province %in% c("BC","AB","SK","MB") ~ 1,
+TRUE ~ 2))
+
+#Save data
+#save(SiteData, file="Input/SiteData_Daycent.RData")
+
+#Take the avg. for the moving avg. 5 yr. 
+SiteData_5y <- SiteData %>%
+  group_by(SiteName) %>%
+  select(SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput, TEXT, Region) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 5, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 5, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Save data
+#save(SiteData_5y, file="Input/SiteData_Daycent_5y.RData")
+```
+
+
+
+### prepare the data for GAMs
+
+I need the avg. data for the most recent 5 y
+
+```{r data preparation for GMAs}
+#Fine texture data
+Data_GAM_Fine <- SiteData %>%
+  filter(Year >= 2018 & TEXT == 3) %>%
+  group_by(SiteName) %>%
+  select(Province, SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 5, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 5, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Medium texture data
+Data_GAM_Medium <- SiteData %>%
+  filter(Year >= 2018 & TEXT == 2) %>%
+  group_by(SiteName) %>%
+  select(Province, SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 5, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 5, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Coarse texture data
+Data_GAM_Coarse <- SiteData %>%
+  filter(Year >= 2018 & TEXT == 1) %>%
+  group_by(SiteName) %>%
+  select(Province, SiteName, deltaSOC, MAP, MAT, MPE, CARB30, Cinput) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 5, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 5, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Save the data 
+save(Data_GAM_Fine, file = "Input/Data_GAM_Fine.RData")
+save(Data_GAM_Medium, file = "Input/Data_GAM_Medium.RData")
+save(Data_GAM_Coarse, file = "Input/Data_GAM_Coarse.RData")
+
+```
