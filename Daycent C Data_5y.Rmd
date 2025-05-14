@@ -118,12 +118,15 @@ testCoarse <- SiteData_Coarse[-trainId_Coarse,]
 
 #GAM for training set
 model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = trainFine)
+#model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput), data = trainFine) R2 =0.41
 summary(model_Fine_gam) #R2 = 0.668
 
 model_Medium_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = trainMedium)
+#model_Medium_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput), data = trainMedium) R2 = 0.43
 summary(model_Medium_gam) #R2 = 0.658
 
 model_Coarse_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30) , data = trainCoarse)
+#model_Coarse_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) , data = trainCoarse) R2 =0.36
 summary(model_Coarse_gam) #R2 = 0.782
 
 #Save the GAM models
@@ -131,17 +134,22 @@ summary(model_Coarse_gam) #R2 = 0.782
 # save(model_Medium_gam,file = "Output/GAM model_Medium.RData")
 # save(model_Coarse_gam,file = "Output/GAM model_Coarse.RData")
 
+#predict delta SOC with train data
+predict_train_Fine <- predict(model_Fine_gam, newdata = trainFine)
+predict_train_Medium <- predict(model_Medium_gam, newdata = trainMedium)
+predict_train_Coarse <- predict(model_Coarse_gam, newdata = trainCoarse)
+
 
 #predict delta SOC with test data
-predict_Fine <- predict(model_Fine_gam, newdata = testFine)
-predict_Medium <- predict(model_Medium_gam, newdata = testMedium)
-predict_Coarse <- predict(model_Coarse_gam, newdata = testCoarse)
+predict_test_Fine <- predict(model_Fine_gam, newdata = testFine)
+predict_test_Medium <- predict(model_Medium_gam, newdata = testMedium)
+predict_test_Coarse <- predict(model_Coarse_gam, newdata = testCoarse)
 
 
 #Compare the predictions and actual values by using Mean square error (MSE)
-MSE_Fine <- mean((predict_Fine-testFine$deltaSOC)^2)        # 0.0057 t/ha
-MSE_Medium <- mean((predict_Medium-testMedium$deltaSOC)^2)  # 0.0040 t/ha
-MSE_Coarse <- mean((predict_Coarse-testCoarse$deltaSOC)^2)  # 0.0018 t/ha
+MSE_Fine <- mean((predict_test_Fine-testFine$deltaSOC)^2)        # 0.0057 t/ha
+MSE_Medium <- mean((predict_test_Medium-testMedium$deltaSOC)^2)  # 0.0040 t/ha
+MSE_Coarse <- mean((predict_test_Coarse-testCoarse$deltaSOC)^2)  # 0.0018 t/ha
 
 #Compare the predictions and actual values by using R2
 R_squared <- function(actuals, predictions) {
@@ -151,15 +159,15 @@ R_squared <- function(actuals, predictions) {
   return(r_squared)
 }
 
-R2_Fine <- R_squared(predict_Fine, testFine$deltaSOC) #0.47
-R2_Medium <- R_squared(predict_Medium, testMedium$deltaSOC) #0.48
-R2_Coarse <- R_squared(predict_Coarse, testCoarse$deltaSOC) #0.76
+R2_Fine <- R_squared(predict_test_Fine, testFine$deltaSOC) #0.47
+R2_Medium <- R_squared(predict_test_Medium, testMedium$deltaSOC) #0.48
+R2_Coarse <- R_squared(predict_test_Coarse, testCoarse$deltaSOC) #0.76
 
 
 #Compare the predictions and actual values by mean absolute percentage error (MAPE)
-MAPE_Fine <- mean(abs(testFine$deltaSOC-predict_Fine)/testFine$deltaSOC)*100            #24.7%
-MAPE_Medium <- mean(abs(testMedium$deltaSOC-predict_Medium)/testMedium$deltaSOC)*100    #9.1%
-MAPE_Coarse <- mean(abs(testCoarse$deltaSOC-predict_Coarse)/testCoarse$deltaSOC)*100    #29.7%
+MAPE_Fine <- mean(abs(testFine$deltaSOC-predict_test_Fine)/testFine$deltaSOC)*100            #24.7%
+MAPE_Medium <- mean(abs(testMedium$deltaSOC-predict_test_Medium)/testMedium$deltaSOC)*100    #9.1%
+MAPE_Coarse <- mean(abs(testCoarse$deltaSOC-predict_test_Coarse)/testCoarse$deltaSOC)*100    #29.7%
 
 ```
 
@@ -167,36 +175,87 @@ MAPE_Coarse <- mean(abs(testCoarse$deltaSOC-predict_Coarse)/testCoarse$deltaSOC)
 ### Plot the preidictions and actual data
 
 ```{r Plot the data, fig.height = 9}
-plot_Fine <- data.frame(actuals = testFine$deltaSOC, predictions = predict_Fine)
-plot_Medium <- data.frame(actuals = testMedium$deltaSOC, predictions = predict_Medium)
-plot_Coarse <- data.frame(actuals = testCoarse$deltaSOC, predictions = predict_Coarse)
+#Train data
+plot_train_Fine <- data.frame(actual = trainFine$deltaSOC, predictions = predict_train_Fine)
+plot_train_Medium <- data.frame(actual = trainMedium$deltaSOC, predictions = predict_train_Medium)
+plot_train_Coarse <- data.frame(actual = trainCoarse$deltaSOC, predictions = predict_train_Coarse)
 
-plot_comp <- function(plot_data) {
-mse <- mean((plot_data$predictions-plot_data$actual)^2)
-mape <- mean(abs(plot_data$actuals-plot_data$predictions)/plot_data$actuals)*100 
-dataset_name <- deparse(substitute(plot_data))
-ggplot(plot_data, aes(x = actuals, y = predictions)) +
-  geom_point(color = 'blue') +                                # Scatter plot of actual vs. predicted
-  geom_abline(slope = 1, intercept = 0, color = 'red', linetype = 'dashed') + # 1:1 line
-  labs(title = paste('Actual vs Predicted Values for', dataset_name),      # Add title and labels
-       x = 'Actual Values (tC /ha)',
-       y = 'Predicted Values (tC /ha)') +
-  theme_minimal() +
-  annotate("text", x = 0, y = Inf, label = paste("MSE:", round(mse, 4),"t C/ha"), 
-           hjust = 1.1, vjust = 2, size = 5, color = "black") + # Add MSE annotation
-  annotate("text", x = 0, y = Inf, label = paste("MAPE:", round(mape, 2), "%"), 
-           hjust = 1.1, vjust = 3.5, size = 5, color = "black") # Add MAPE annotation
+
+#Test data
+plot_test_Fine <- data.frame(actual = testFine$deltaSOC, predictions = predict_test_Fine)
+plot_test_Medium <- data.frame(actual = testMedium$deltaSOC, predictions = predict_test_Medium)
+plot_test_Coarse <- data.frame(actual = testCoarse$deltaSOC, predictions = predict_test_Coarse)
+
+
+
+plot_comp <- function(plot_test_data, plot_train_data) {
+  # Calculate MSE and MAPE for test data
+  mse <- mean((plot_test_data$predictions - plot_test_data$actual)^2)
+  mape <- mean(abs(plot_test_data$actual - plot_test_data$predictions) / plot_test_data$actual) * 100 
+  dataset_name <- deparse(substitute(plot_test_data))
   
+  x_max <- max(plot_train_data$actual)
+  y_min <- min(plot_train_data$predictions)
+  Soil_name <- sub(".*_", "", deparse(substitute(plot_test_data)))
+    ggplot() +
+    geom_point(data = plot_train_data, aes(x = actual, y = predictions), color = 'blue', shape = 1, show.legend = TRUE ) + # Train data in red
+    geom_point(data = plot_test_data, aes(x = actual, y = predictions), color = 'red', shape = 1, show.legend = TRUE ) +  # Test data in blue
+    geom_abline(slope = 1, intercept = 0, color = 'red', linetype = 'dashed') +  # 1:1 line
+    labs(title = paste('Model vs GAM Values for', Soil_name),  # Add title and labels
+         x = 'Model Values (tC /ha)',
+         y = 'GAM Values (tC /ha)',
+         color = "Data Type") +
+    theme_minimal() +
+    coord_cartesian(xlim = c(-0.7, 0.7), ylim = c(-0.7, 0.7))  # Set x and y axis limits
+    #scale_color_manual(values = c("Test Data" = "red", "Train Data" = "blue")) #+
+    # annotate("text", x = x_max, y = y_min*1.1, 
+    #          label = paste("MSE:", round(mse, 4), "t C/ha"), 
+    #          hjust = 1.1, vjust = 2, size = 4, color = "black") +  # Add MSE annotation
+    # annotate("text", x = x_max, y = y_min * 1.2, 
+    #          label = paste("MAPE:", round(mape, 2), "%"), 
+    #          hjust = 1.1, vjust = 3.5, size = 4, color = "black")   # Add MAPE annotation
 }
 
-plot_F <- plot_comp(plot_Fine)
-plot_M <- plot_comp(plot_Medium)
-plot_C <- plot_comp(plot_Coarse)
+plot_F <- plot_comp(plot_test_Fine,plot_train_Fine)
+plot_M <- plot_comp(plot_test_Medium,plot_train_Medium)
+plot_C <- plot_comp(plot_test_Coarse,plot_train_Coarse)
 
 grid.arrange(plot_F,plot_M,plot_C, heights = unit(c(3,3,3), "inches"))
 
 
 ```
+
+### Model performance of training and test data
+
+```{r model performance}
+train.data <-list(plot_train_Fine, plot_train_Medium, plot_train_Coarse)
+test.data <- list(plot_test_Fine, plot_test_Medium, plot_test_Coarse)
+
+model.p <- function (data) {
+  # Calculate MSE and MAPE for test data
+  mse <- round(mean((data$predictions - data$actual)^2),3)
+  mape <- round(mean(abs(data$actual - data$predictions) / data$actual) * 100,1) 
+  return(list(MSE = mse, MAPE = mape))
+}
+
+# Apply the function to each dataset in train.data and test.data
+train_results <- lapply(train.data, model.p)
+test_results <- lapply(test.data, model.p)
+
+# Combine the results into a data frame
+results <- data.frame(
+  Dataset = c("Fine", "Medium", "Coarse"),
+  Train_MSE = sapply(train_results, function(x) x$MSE),
+  Train_MAPE = sapply(train_results, function(x) x$MAPE),
+  Test_MSE = sapply(test_results, function(x) x$MSE),
+  Test_MAPE = sapply(test_results, function(x) x$MAPE)
+)
+
+
+knitr::kable(results, caption = "MSE and sMAPE for Train and Test Data")
+
+```
+
 
 
 ### C input group (Obsolete).
