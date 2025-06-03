@@ -49,7 +49,9 @@ Weather <- Weather_y %>%
             MAP_grow = sum(precip[month %in% grow]),
             MAT_grow = mean(temp[month %in% grow]),
             MPE_grow = sum(pe[month %in% grow]))
-                           
+#Save data
+save(Weather, file = "Input/Data_Weather.RData")                           
+
 #Prepare C input based on C input proportion and crop specific C input(t)
 TotalCinput <- Ecodc %>%
   group_by(ECODISTRIC, YEAR, Province_ID) %>%
@@ -146,5 +148,43 @@ Data_GAM_Coarse <- SiteData %>%
 save(Data_GAM_Fine, file = "Input/Data_GAM_Fine.RData")
 save(Data_GAM_Medium, file = "Input/Data_GAM_Medium.RData")
 save(Data_GAM_Coarse, file = "Input/Data_GAM_Coarse.RData")
+
+```
+
+
+### prepare the data for GAMs only 2017-2019 to check CRC data
+
+```{r data preparation for GMAs}
+#Fine texture data
+Data_GAM_Fine_CRC <- SiteData %>%
+  filter(Year >= 2017 & Year <=2019 & TEXT == 3) %>%
+  group_by(SiteName) %>%
+  select(Province, SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 3, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 3, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Medium texture data
+Data_GAM_Medium_CRC <- SiteData %>%
+  filter(Year >= 2017 & Year <=2019 & TEXT == 2) %>%
+  group_by(SiteName) %>%
+  select(Province, SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 3, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 3, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Coarse texture data
+Data_GAM_Coarse_CRC <- SiteData %>%
+  filter(Year >= 2017 & Year <=2019 & TEXT == 1) %>%
+  group_by(SiteName) %>%
+  select(Province, SiteName, deltaSOC, MAP, MAT, MPE, CARB30, Cinput) %>%
+  mutate(deltaSOC = rollmean(deltaSOC, k = 3, fill= NA, align = "right")) %>%
+  mutate(Cinput = rollmean(Cinput, k = 3, fill= NA, align = "right")) %>%
+  na.omit()
+
+#Save the data 
+save(Data_GAM_Fine_CRC, file = "Input/Data_GAM_Fine_2017-2019.RData")
+save(Data_GAM_Medium_CRC, file = "Input/Data_GAM_Medium_2017-2019.RData")
+save(Data_GAM_Coarse_CRC, file = "Input/Data_GAM_Coarse_2017-2019.RData")
 
 ```

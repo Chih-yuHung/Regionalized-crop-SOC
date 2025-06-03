@@ -30,13 +30,13 @@ load("Output/GAM model_Fine.RData")
 load("Output/GAM model_Medium.RData")
 load("Output/GAM model_Coarse.RData")
 
-#Apply the GAMs, 1000 for converting to kg C /ha
-Data_GAM_Fine$predict <- predict(model_Fine_gam, newdata = Data_GAM_Fine) *1000
-Data_GAM_Medium$predict <- predict(model_Medium_gam, newdata = Data_GAM_Medium) *1000
-Data_GAM_Coarse$predict <- predict(model_Coarse_gam, newdata = Data_GAM_Coarse) *1000
+#Apply the GAMs, 1000 for converting to kg C /ha  and 44/12 to kg CO2
+Data_GAM_Fine$predict <- predict(model_Fine_gam, newdata = Data_GAM_Fine) *1000 *44/12
+Data_GAM_Medium$predict <- predict(model_Medium_gam, newdata = Data_GAM_Medium) *1000 *44/12
+Data_GAM_Coarse$predict <- predict(model_Coarse_gam, newdata = Data_GAM_Coarse) *1000 *44/12
 
 #Atlantic provinces
-AT <- c("NL","NS","PE","NB")
+AT <- c("NF","NS","PE","NB")
 
 #Obtain the weighted mean values for the provinces
 Result_Fine <- Data_GAM_Fine %>%
@@ -76,10 +76,73 @@ Result <- Result_Coarse %>%
 summary(Result) #provide avg. based on province
 
 #Avg. based on texture
-sum(Data_GAM_Fine$Cinput*Data_GAM_Fine$predict)/sum(Data_GAM_Fine$Cinput) #136.5
-sum(Data_GAM_Medium$Cinput*Data_GAM_Medium$predict)/sum(Data_GAM_Medium$Cinput) #138.2
-sum(Data_GAM_Coarse$Cinput*Data_GAM_Coarse$predict)/sum(Data_GAM_Coarse$Cinput) #131.1
+sum(Data_GAM_Fine$Cinput*Data_GAM_Fine$predict)/sum(Data_GAM_Fine$Cinput) #500.61
+sum(Data_GAM_Medium$Cinput*Data_GAM_Medium$predict)/sum(Data_GAM_Medium$Cinput) #506.74
+sum(Data_GAM_Coarse$Cinput*Data_GAM_Coarse$predict)/sum(Data_GAM_Coarse$Cinput) #480.85
 
 
 ```
 
+
+
+
+### Predict the delta C due to C inputs with the GAMs
+
+This is the result for CRC result comparison, which includes 2017-2019 only
+
+```{r predict}
+#Load the Prepared CRC results 2017-2019
+load("Input/Data_GAM_Fine_2017-2019.RData")
+load("Input/Data_GAM_Medium_2017-2019.RData")
+load("Input/Data_GAM_Coarse_2017-2019.RData")
+
+
+#Apply the GAMs, 1000 for converting to kg C /ha and 44/12 to kg CO2
+Data_GAM_Fine_CRC$predict <- predict(model_Fine_gam, newdata = Data_GAM_Fine_CRC) *1000 *44/12
+Data_GAM_Medium_CRC$predict <- predict(model_Medium_gam, newdata = Data_GAM_Medium_CRC) *1000 *44/12
+Data_GAM_Coarse_CRC$predict <- predict(model_Coarse_gam, newdata = Data_GAM_Coarse_CRC) *1000 *44/12
+
+#Atlantic provinces
+AT <- c("NF","NS","PE","NB")
+
+#Obtain the weighted mean values for the provinces
+Result_Fine <- Data_GAM_Fine_CRC %>%
+  mutate (Region = case_when(         #combine the region
+          Province %in% AT ~ "AT",
+          TRUE ~Province)) %>%
+  mutate(predict.w = Cinput * predict) %>%
+  group_by(Region) %>%
+  summarise(DeltaSOC_Fine = sum(predict.w)/sum(Cinput))
+
+Result_Medium <- Data_GAM_Medium_CRC %>%
+  mutate (Region = case_when(         #combine the region
+          Province %in% AT ~ "AT",
+          TRUE ~Province)) %>%
+  mutate(predict.w = Cinput * predict) %>%
+  group_by(Region) %>%
+  summarise(DeltaSOC_Medium = sum(predict.w)/sum(Cinput))
+
+Result_Coarse <- Data_GAM_Coarse_CRC %>%
+  mutate (Region = case_when(         #combine the region
+          Province %in% AT ~ "AT",
+          TRUE ~Province)) %>%
+  mutate(predict.w = Cinput * predict) %>%
+  group_by(Region) %>%
+  summarise(DeltaSOC_Coarse = sum(predict.w)/sum(Cinput))
+
+#Combine them to have the output table
+Result <- Result_Coarse %>%
+  full_join(Result_Medium, by = "Region") %>%
+  full_join(Result_Fine, by = "Region")
+
+
+#Summary for the report
+#summary(Result) #provide avg. based on province
+
+#Avg. based on texture
+sum(Data_GAM_Fine_CRC$Cinput*Data_GAM_Fine_CRC$predict)/sum(Data_GAM_Fine_CRC$Cinput) #149
+sum(Data_GAM_Medium_CRC$Cinput*Data_GAM_Medium_CRC$predict)/sum(Data_GAM_Medium_CRC$Cinput) #147.6
+sum(Data_GAM_Coarse_CRC$Cinput*Data_GAM_Coarse_CRC$predict)/sum(Data_GAM_Coarse_CRC$Cinput) #136.6
+
+
+```

@@ -82,13 +82,35 @@ for (text_group in levels(SiteData$TEXT)) {
   
   # Predict & evaluate-
   pred <- predict(xgb_model, newdata = test_x)
-  rmse <- RMSE(pred, test_y)
+  mse <- mean((pred - test_y)^2)
+  rmse <- sqrt(mse)
   r2 <- R2(pred, test_y)
   
-  cat("RMSE:", round(rmse, 3), "\nR²:", round(r2, 3), "\n")
+  # Guard for divide-by-zero in MAPE
+  if (any(test_y == 0)) {
+    mape <- NA
+  } else {
+    mape <- mean(abs((pred - test_y) / test_y)) * 100
+  }
+  
+  # Symmetric MAPE (sMAPE)
+  smape <- mean(2 * abs(pred - test_y) / (abs(pred) + abs(test_y))) * 100
+  
+  cat("MSE:", round(mse, 3),
+      "| RMSE:", round(rmse, 3),
+      "| R²:", round(r2, 3),
+      "| MAPE:", round(mape, 2), "%",
+      "| sMAPE:", round(smape, 2), "%\n")
   
   # Store model + results
-  model_results[[text_group]] <- list(model = xgb_model, RMSE = rmse, R2 = r2)
+  rf_results[[text_group]] <- list(
+    model = rf_model,
+    MSE = mse,
+    RMSE = rmse,
+    R2 = r2,
+    MAPE = mape,
+    sMAPE = smape
+  )
 }
 
 # ----- Running model for TEXT = 1 -----
@@ -188,12 +210,22 @@ for (text_group in levels(SiteData$TEXT)) {
   mse <- mean((pred - test_y)^2)
   rmse <- sqrt(mse)
   r2 <- R2(pred, test_y)
-  mape <- mean(abs((pred - test_y) / test_y)) * 100
+  
+  # Guard for divide-by-zero in MAPE
+  if (any(test_y == 0)) {
+    mape <- NA
+  } else {
+    mape <- mean(abs((pred - test_y) / test_y)) * 100
+  }
+  
+  # Symmetric MAPE (sMAPE)
+  smape <- mean(2 * abs(pred - test_y) / (abs(pred) + abs(test_y))) * 100
   
   cat("MSE:", round(mse, 3),
       "| RMSE:", round(rmse, 3),
       "| R²:", round(r2, 3),
-      "| MAPE:", round(mape, 2), "%\n")
+      "| MAPE:", round(mape, 2), "%",
+      "| sMAPE:", round(smape, 2), "%\n")
   
   # Store results
   rf_results[[text_group]] <- list(
@@ -201,7 +233,8 @@ for (text_group in levels(SiteData$TEXT)) {
     MSE = mse,
     RMSE = rmse,
     R2 = r2,
-    MAPE = mape
+    MAPE = mape,
+    sMAPE = smape
   )
 }
 
