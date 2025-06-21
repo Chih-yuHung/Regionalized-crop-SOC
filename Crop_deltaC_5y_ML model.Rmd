@@ -15,6 +15,7 @@ library(ggplot2)
 library(knitr)
 library(patchwork)   # for arranging multiple plots
 load(file="Input/SiteData_Daycent_5y.RData")
+SiteData_5y<-readRDS(file="Input/SiteData_5y.rds")
 ```
 
 
@@ -177,12 +178,12 @@ kruskal.test(MPE ~ TEXT, data = SiteData_5y)    # P< 0.001
 ```{r Random forest without spliting soil texture, eval=FALSE}
 
 model_specs <- list(
-  model1 = c("MAP", "MAT", "MPE", "Cinput", "CARB30", "TEXT"),
-  model2 = c("MAP", "MAT", "MPE", "Cinput", "TEXT"),
-  model3 = c("MAP", "MAT", "MPE", "Cinput", "CARB30", "TSAND", "TCLAY"),
-  model4 = c("MAP", "MAT", "MPE", "Cinput", "TSAND", "TCLAY"),
-  model5 = c("MAP", "MAT", "MPE", "CARB30", "TSAND", "TCLAY"),
-  model5 = c("MAP", "MAT", "MPE", "TSAND", "TCLAY")
+  model1 = c("MAP", "MAT", "MPE", "Cinput", "CARB30", "TEXT")
+  # model2 = c("MAP", "MAT", "MPE", "Cinput", "TEXT"),
+  # model3 = c("MAP", "MAT", "MPE", "Cinput", "CARB30", "TSAND", "TCLAY"),
+  # model4 = c("MAP", "MAT", "MPE", "Cinput", "TSAND", "TCLAY"),
+  # model5 = c("MAP", "MAT", "MPE", "CARB30", "TSAND", "TCLAY"),
+  # model5 = c("MAP", "MAT", "MPE", "TSAND", "TCLAY")
 )
 
 results_summary <- list()

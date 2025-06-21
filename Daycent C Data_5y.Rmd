@@ -26,19 +26,18 @@ library(gridExtra)
 #summary(stepwise_model)
 #cat("R² value: ", summary(stepwise_model)$r.squared, "\n")
 
-load("Input/SiteData_Daycent_5y.RData")
 
 SiteData <- SiteData_5y
 
 
-model <- lm(deltaSOC ~ MAP * CARB30 * Cinput * TEXT * Region , data = SiteData)
-stepwise_model <- step(model, direction = "backward")
-summary(stepwise_model)
+# model <- lm(deltaSOC ~ MAP * CARB30 * Cinput * TEXT * Region , data = SiteData)
+# stepwise_model <- step(model, direction = "backward")
+# summary(stepwise_model)
 
 ```
 
 
-### Generalized additive model
+### Generalized additive model (obsolete)
 
 ```{r Generalized additive model}
 # Fit a GAM model
@@ -67,8 +66,8 @@ In this part, we will group the data into three soil texture groups (Fine, Mediu
 ### Soil textured group-prepare train-test split
 
 ```{r Grouped model- Soil texture}
-#1. Soil texture group
 
+#1. Soil texture group
 SiteData_Fine <- SiteData %>%
   filter(TEXT == 3)
 SiteData_Medium <- SiteData %>%
@@ -98,24 +97,6 @@ testCoarse <- SiteData_Coarse[-trainId_Coarse,]
 ### Soil textured group- regression for the training group
 
 ```{r regression model for soil texture groups}
-## Going to use GAM model only
-# #Fit the regression models
-# model_Fine <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Fine)
-# #model_Fine <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Fine)
-# stepwise_Fine <- step(model_Fine, direction = "backward")
-# summary(stepwise_Fine) # R2 = 0.451
-# 
-# model_Med <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Medium)
-# model_Med <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Medium)
-# stepwise_Med <- step(model_Med, direction = "backward")
-# summary(stepwise_Med) #R2 = 0.545
-# 
-# model_Coarse <- lm(deltaSOC ~ MAP + MAT + CARB30 + Cinput + Region , data = SiteData_Coarse)
-# model_Coarse <- lm(deltaSOC ~ MAP * MAT * CARB30 * Cinput * Region , data = SiteData_Coarse)
-# stepwise_Coarse <- step(model_Coarse, direction = "backward")
-# summary(stepwise_Coarse) #highest R2= 0.737
-
-
 #GAM for training set
 model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput) + s(CARB30), data = trainFine)
 #model_Fine_gam <- gam(deltaSOC ~ s(MAP) + s(MAT) + s(MPE) + s(Cinput), data = trainFine) R2 =0.41
@@ -359,8 +340,6 @@ The MAPs were determined arbitary
 ## Abandoned for moving average analysis
 The look-up table include MAP, MAT, Soil Texture Class and C input
 Based on the regression results, I believe =
-
-
 ```{r Lookup table }
 # Ensure TEXT is a factor
 # SiteData$TEXT <- as.factor(SiteData$TEXT)
