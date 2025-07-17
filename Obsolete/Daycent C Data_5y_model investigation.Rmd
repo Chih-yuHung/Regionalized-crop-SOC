@@ -1,5 +1,6 @@
 ---
-title: "Delta SOC_Crop input"
+title: "Delta SOC_Crop input_Model investigation
+"
 author: "Dr. Chih-Yu Hung"
 date: "2024-06-21"
 output: html_document

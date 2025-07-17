@@ -1,8 +1,23 @@
+---
+title: "3.1 Crop_Delta SOC_Random Forest"
+author: "Dr. Chih-Yu Hung"
+date: "2025-06-20"
+output: html_document
+---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(caret)
-cl <- makeCluster(parallel::detectCores() - 1)
-registerDoParallel(cl)
+library(xgboost)
+library(randomForest)
+library(doParallel)
+library(ggplot2)
+library(knitr)
+library(glue)
+set.seed(2025)       # reproducible splits
+
+
 # 1. Locate and read the *.rds files
 file_paths  <- list.files("Input", pattern = "^SiteData_\\d+y\\.rds$", full.names = TRUE)
 data_list   <- map(file_paths, readRDS)
@@ -47,7 +62,7 @@ for (i in seq_along(data_list)) {
     tuneGrid = expand.grid(mtry = 2:4), #Previous showed the lowest RMSE occurs on 3 or 4
     trControl = trainControl(method = "cv", number = 5, allowParallel = TRUE),
     ntree = 500
-  )
+   )
   
   stopCluster(cl)
   # Prediction
@@ -97,7 +112,10 @@ for (i in seq_along(data_list)) {
   importance_summary[[model_name]] <- imp
 }
 
+```
 
+
+```{r performance check}
 # Performance table
 perf_table <- bind_rows(results_summary)
 
@@ -122,8 +140,6 @@ write.csv(imp_wide, "Output/Variable_Importance_Comparison_Moving average.csv", 
 print(perf_table)
 
 
-
-
 #Pivot the table
 Perf_long <- perf_table %>% 
   pivot_longer(c(MSE, R2, sMAPE), names_to = "metric",
@@ -144,3 +160,4 @@ ggplot(Perf_long,
        #colour = "Texture") +
   theme_minimal(base_size = 12)
 
+```

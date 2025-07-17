@@ -53,7 +53,7 @@ Weather <- Weather_y %>%
             MAT_grow = mean(temp[month %in% grow]),
             MPE_grow = sum(pe[month %in% grow]))
 #Save data
-save(Weather, file = "Input/Data_Weather.RData")                           
+#save(Weather, file = "Input/Data_Weather.RData")                           
 
 #Prepare C input based on C input proportion and crop specific C input(t)
 TotalCinput <- Ecodc %>%

@@ -1,0 +1,37 @@
+---
+title: "1. SOC EF_US"
+author: "Dr. Chih-Yu Hung"
+date: "2025-07-17"
+output: html_document
+---
+
+## SOC EF (delta SOC) for US
+
+We are using the RF model (5-y moving average) to estimate SOC changes from crop C input
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("setup.R")
+load("Output/Model_5.RData") # ML model from 5-y moving average.
+
+SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
+  mutate(TEXT = case_when(
+    Texture == "Fine"      ~ 3,
+    Texture == "Medium"    ~ 2,
+    Texture == "Coarse"    ~ 1,
+    TRUE                   ~NA_integer_
+  ))
+  
+
+```
+
+
+
+```{r}
+
+SiteData$predict <- predict(rf_model, newdata = SiteData)
+
+
+```
