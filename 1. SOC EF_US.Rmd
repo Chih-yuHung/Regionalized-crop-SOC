@@ -27,11 +27,59 @@ SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
 
 ```
 
+## SOC change prediction
 
+county level first and aggregate to state level
 
 ```{r}
+#County level data
+SiteData$SOC_predict <- predict(rf_model, newdata = SiteData)
 
-SiteData$predict <- predict(rf_model, newdata = SiteData)
+write.csv(SiteData, "Output/1. SOC_Cinput_EF_US_county.csv", row.names = FALSE)
 
+
+# Aggregated to state level
+
+#helper for weighted means that gracefully handles all-NA cases
+w_mean <- function(x, w) {
+  if (all(is.na(x))) return(NA_real_)
+  weighted.mean(x, w, na.rm = TRUE)
+}
+
+#obtain weighted values and simple average
+SiteData_State <- SiteData %>% 
+  mutate(area_w = AREA * Frac / 100) %>%          # weight column once
+  group_by(STATE, CROP, CLASS, UTIL_PRACTICE_DESC) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, area_w)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  )%>% 
+  select(STATE, CROP, CLASS, UTIL_PRACTICE_DESC, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
+
+summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.094010, min -0.111092t/ha
+#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_WO Silage.csv", row.names = FALSE)
+
+#obtain weighted values and simple average, Silage and grain aggregagted
+SiteData_State <- SiteData %>% 
+  mutate(area_w = AREA * Frac / 100) %>%          # weight column once
+  group_by(STATE, CROP, CLASS) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, area_w)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  ) %>%
+  select(STATE, CROP, CLASS, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
+
+summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.094253, min -0.111092 t/ha
+#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_state.csv", row.names = FALSE)
 
 ```

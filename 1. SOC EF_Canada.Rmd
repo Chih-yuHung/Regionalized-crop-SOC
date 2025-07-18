@@ -1,0 +1,107 @@
+---
+title: "1. SOC EF_Canada"
+author: "Dr. Chih-Yu Hung"
+date: "2025-07-18"
+output: html_document
+---
+
+## SOC EF (delta SOC) for Canada
+
+We are using the RF model (5-y moving average) to estimate SOC changes from crop C input
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("setup.R")
+load("Output/Model_5.RData") # ML model from 5-y moving average.
+SiteData <- read_rds("Input/Canada Cinput_5y.rds") %>%
+            mutate(TEXT = case_when(
+            TEXCAT == "fine"      ~ 3,
+            TEXCAT == "medium"    ~ 2,
+            TEXCAT == "coarse"    ~ 1,
+            TRUE                   ~NA_integer_
+               ))
+  
+```
+
+## SOC change prediction
+
+county level first and aggregate to state level
+
+```{r}
+#County level data
+SiteData$SOC_predict <- predict(rf_model, newdata = SiteData)
+
+# Aggregated to Region level (Atlantic provinces)
+SiteData <- SiteData %>%
+  mutate(Region = ifelse(
+    Province_ID %in% c("NB","NF","NS","PE"), "AT", Province_ID
+  )) %>%
+  filter(CROPS %in% c("BARLEY", "CANOLA", "CORNGR", "CORNSLG", "DFPEAS",
+         "RYEFAL", "WHTSPG", "SOYBNS", "WHTDUR", "WHTWINT",
+         "TRITCL", "RYESPG")) %>%
+  mutate(CROP = case_when(
+     CROPS == "BARLEY"     ~ "Barley",
+     CROPS == "CANOLA"     ~ "Canola",
+     CROPS == "CORNGR"     ~ "Corn",
+     CROPS == "CORNSLG"    ~ "Corn",
+     CROPS == "DFPEAS"     ~ "Peas",
+     CROPS == "RYEFAL"     ~ "RYE",
+     CROPS == "RYESPG"     ~ "RYE",
+     CROPS == "WHTSPG"     ~ "Wheat(spring)",
+     CROPS == "SOYBNS"     ~ "Soybeans",
+     CROPS == "WHTDUR"     ~ "Wheat(durum)",
+     CROPS == "WHTWINT"    ~ "Wheat(winter)",
+     CROPS == "TRITCL"     ~ "Triticale",
+     TRUE                  ~ NA_character_
+  )) %>%
+  mutate(UTIL = case_when(
+     CROPS == "CORNGR"     ~ "Grain",
+     CROPS == "CORNSLG"    ~ "Sliage",
+     TRUE                  ~ "All production"
+  ))
+
+#helper for weighted means that gracefully handles all-NA cases
+w_mean <- function(x, w) {
+  if (all(is.na(x))) return(NA_real_)
+  weighted.mean(x, w, na.rm = TRUE)
+}
+
+#obtain weighted values and simple average
+SiteData_CA <- SiteData %>% 
+  mutate(area_w = AREA * Frac / 100) %>%          # weight column once
+  group_by(Region, CROP, UTIL) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, area_w)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  ) %>%
+  select(Region, CROP, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
+
+summary(SiteData_CA) # SOC_predict_wavg, median 0.12559, mean 0.12669, min -0.06113 t/ha
+#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada_WO Silage.csv", row.names = FALSE)
+
+#obtain weighted values and simple average, Silage and grain aggregated
+SiteData_CA <- SiteData %>% 
+  mutate(area_w = AREA * Frac / 100) %>%          # weight column once
+  group_by(Region, CROP) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, area_w)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  ) %>%
+  select(Region, CROP, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
+
+summary(SiteData_CA) # SOC_predict_wavg, median 0.12436, mean 0.12345, min -0.06113 t/ha
+#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada.csv", row.names = FALSE)
+
+```

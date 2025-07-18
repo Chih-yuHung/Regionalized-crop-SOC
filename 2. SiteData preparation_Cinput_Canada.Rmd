@@ -76,16 +76,15 @@ SiteData <- SiteAdj %>%
 SiteData <- SiteData %>%
   inner_join(Weather, by = c("Ecodistrict" = "Ecodistrict" )) %>%
   inner_join(EcoP, by = c("Ecodistrict" =  "ECODISTRIC", "Province" = "PROVINCE","SiteName" = "sitename"))
-  
 
-#join the Cinput
+#join the Cinput, not crop specific for model training
 SiteData <- SiteData %>%
   inner_join(TotalCinput, by = c( "Ecodistrict" = "ECODISTRIC", "Province" = "Province_ID", "Year" = "YEAR"))
-
 
 #NA omit, there are some data has no soil texture categories. (TEXCAT = na)
 SiteData <- na.omit(SiteData)
 SiteData <- SiteData[!(SiteData$TEXCAT == "na"),]
+
 
 #Put dummy variables for soil texture and Eastern and Western Canada
 #We believe crops in Western and Eastern Canada are quite different and have different C/N that could influence delta SOC
@@ -98,9 +97,9 @@ TRUE ~ 99)) %>%
 mutate(Region = case_when(
 Province %in% c("BC","AB","SK","MB") ~ 1, #Western Canada
 TRUE ~ 2))
-
 #Save data
 #save(SiteData, file="Input/SiteData_Daycent.RData")
+
 ```
 
 ## Prepare various moving avg data to test the model
@@ -131,19 +130,36 @@ SiteData_MA <- windows %>%
   map(calc_moving)
 
 # save each table to disk in one line ──
-walk2(SiteData_MA, names(SiteData_MA),
-      ~ write_rds(.x, file = file.path("Input", paste0(.y, ".rds"))))
+#walk2(SiteData_MA, names(SiteData_MA),
+#      ~ write_rds(.x, file = file.path("Input", paste0(.y, ".rds"))))
+```   
    
-   
-# 
-# #Take the avg. for the moving avg. 5 yr. 
-# SiteData_5y <- SiteData %>%
-#   group_by(SiteName) %>%
-#   select(SiteName,deltaSOC, MAP, MAT, MPE, CARB30, Cinput, TEXT, Region) %>%
-#   mutate(deltaSOC = rollmean(deltaSOC, k = 5, fill= NA, align = "right")) %>%
-#   mutate(Cinput = rollmean(Cinput, k = 5, fill= NA, align = "right")) %>%
-#   na.omit()
+
+## Prepare data as input for RF model
+
+
+```{r prepare data for model prediction}
+## Prepare 5-y moving average data to predict SOC
+#C input Crop specific
+TotalCinput_Crop <- Ecodc %>%
+  filter(YEAR %in% c(2018:2022)) %>%
+  mutate(Cinput_ha = CInput_withRootExudates_t /     # t / ha for each record
+                        Corrected_Area) %>% 
+  group_by(ECODISTRIC, Province_ID, CROPS) %>%
+  summarise(Cinput = mean(Cinput_ha,  na.rm = TRUE),        # un-weighted
+            AREA = mean(Corrected_Area, na.rm = TRUE),     # avg ha per year
+            ) 
+
+#join the weather data
+SiteData_Crop <- TotalCinput_Crop %>%
+  left_join(Weather, by = c("ECODISTRIC" = "Ecodistrict" ))%>%
+  left_join(EcoP, by = c("ECODISTRIC", "Province_ID" = "PROVINCE")) %>%
+  filter(!TEXCAT == "na") %>%
+  group_by(ECODISTRIC, Province_ID, CROPS) %>%
+  mutate(AREA = AREA * totalHec/sum(totalHec)) %>% #determine area based on soil texture
+  select(ECODISTRIC, Province_ID, CROPS, Cinput, AREA, MAP, MAT, MPE, TEXCAT, CARB30, Frac = PERCECO)
 
 #Save data
-#save(SiteData_5y, file="Input/SiteData_Daycent_5y.RData")
+summary(SiteData_Crop) #Cinput, AREA, MAP, MAT, MPE, CARB: 2.3019, 42.1, 515.0, 2.567, 543.1, 6412.
+#write_rds(SiteData_Crop, file="Input/Canada Cinput_5y.rds")
 ```
