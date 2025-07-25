@@ -15,6 +15,8 @@ We are using the RF model (5-y moving average) to estimate SOC changes from crop
 knitr::opts_chunk$set(echo = TRUE)
 source("setup.R")
 load("Output/Model_5.RData") # ML model from 5-y moving average.
+#model <-read_rds("Models/SiteData_5y_20250721.rds")
+
 
 SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
   mutate(TEXT = case_when(
@@ -35,11 +37,13 @@ county level first and aggregate to state level
 #County level data
 SiteData$SOC_predict <- predict(rf_model, newdata = SiteData)
 
-write.csv(SiteData, "Output/1. SOC_Cinput_EF_US_county.csv", row.names = FALSE)
+#CAP deltaSOC to Cinput
+SiteData <- SiteData %>%
+  mutate(SOC_predict = ifelse(SOC_predict > Cinput, Cinput, SOC_predict))
 
+#write.csv(SiteData, "Output/1. SOC_Cinput_EF_US_county.csv", row.names = FALSE)
 
 # Aggregated to state level
-
 #helper for weighted means that gracefully handles all-NA cases
 w_mean <- function(x, w) {
   if (all(is.na(x))) return(NA_real_)
@@ -48,6 +52,7 @@ w_mean <- function(x, w) {
 
 #obtain weighted values and simple average
 SiteData_State <- SiteData %>% 
+  filter(Cinput > 0) %>%
   mutate(area_w = AREA * Frac / 100) %>%          # weight column once
   group_by(STATE, CROP, CLASS, UTIL_PRACTICE_DESC) %>% 
   summarise(
@@ -61,8 +66,8 @@ SiteData_State <- SiteData %>%
   )%>% 
   select(STATE, CROP, CLASS, UTIL_PRACTICE_DESC, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
 
-summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.094010, min -0.111092t/ha
-#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_WO Silage.csv", row.names = FALSE)
+summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.092868, min -0.111136t/ha
+#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_GrainSplit.csv", row.names = FALSE)
 
 #obtain weighted values and simple average, Silage and grain aggregagted
 SiteData_State <- SiteData %>% 
@@ -79,7 +84,24 @@ SiteData_State <- SiteData %>%
   ) %>%
   select(STATE, CROP, CLASS, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
 
-summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.094253, min -0.111092 t/ha
-#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_state.csv", row.names = FALSE)
+summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.092966, min -0.111136 t/ha
+#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_GrainAgg.csv", row.names = FALSE)
 
 ```
+
+
+## QC check. if I put dummy 0 for Cinput, would delta SOC go to 0?
+
+```{r}
+SiteData_QC <- SiteData %>% 
+  mutate(Cinput  = 0.01)
+
+SiteData_QC$SOC_predict <- predict(rf_model, newdata = SiteData_QC)
+  
+
+
+
+
+
+```
+

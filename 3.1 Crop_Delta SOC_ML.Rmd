@@ -139,6 +139,7 @@ write.csv(imp_wide, "Output/Variable_Importance_Comparison_Moving average.csv", 
 # Show performance
 print(perf_table)
 
+#perf_table <- read.csv("Output/Model_Performance_Moving average.csv")
 
 #Pivot the table
 Perf_long <- perf_table %>% 

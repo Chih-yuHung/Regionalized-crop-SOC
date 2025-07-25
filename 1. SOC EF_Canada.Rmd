@@ -33,6 +33,11 @@ county level first and aggregate to state level
 #County level data
 SiteData$SOC_predict <- predict(rf_model, newdata = SiteData)
 
+#CAP deltaSOC to Cinput
+SiteData <- SiteData %>%
+  mutate(SOC_predict = ifelse(SOC_predict > Cinput, Cinput, SOC_predict))
+
+
 # Aggregated to Region level (Atlantic provinces)
 SiteData <- SiteData %>%
   mutate(Region = ifelse(
@@ -84,7 +89,7 @@ SiteData_CA <- SiteData %>%
   select(Region, CROP, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
 
 summary(SiteData_CA) # SOC_predict_wavg, median 0.12559, mean 0.12669, min -0.06113 t/ha
-#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada_WO Silage.csv", row.names = FALSE)
+#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada_GrainSplit.csv", row.names = FALSE)
 
 #obtain weighted values and simple average, Silage and grain aggregated
 SiteData_CA <- SiteData %>% 
@@ -102,6 +107,25 @@ SiteData_CA <- SiteData %>%
   select(Region, CROP, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
 
 summary(SiteData_CA) # SOC_predict_wavg, median 0.12436, mean 0.12345, min -0.06113 t/ha
-#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada.csv", row.names = FALSE)
+#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada_GrainAgg.csv", row.names = FALSE)
 
 ```
+
+
+
+
+## QC check. if I put dummy 0 for Cinput, would delta SOC go to 0?
+
+```{r}
+SiteData_QC <- SiteData %>% 
+  mutate(Cinput  = 0)
+
+SiteData_QC$SOC_predict <- predict(rf_model, newdata = SiteData_QC)
+  
+
+
+
+
+
+```
+

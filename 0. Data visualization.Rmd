@@ -1,0 +1,77 @@
+---
+title: "0. Data visualization"
+author: "Dr. Chih-Yu Hung"
+date: "2025-07-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+data <- read_csv("Output/1. SOC_Cinput_EF_US_state.csv")
+```
+
+## Boxplot
+
+```{r cars}
+
+#Add class to crop
+data <- data %>%
+  mutate(CLASS = case_when(
+    CLASS == "ALL CLASSES"   ~"",
+    CLASS == "DRY EDIBLE"    ~"",
+    TRUE                     ~paste0(", ", CLASS,"")
+  )) %>%
+  mutate(CROP = paste0(CROP,CLASS,""))
+
+
+# Convert CROP to a factor sorted alphabetically
+data$CROP <- factor(data$CROP, levels = sort(unique(data$CROP)))
+
+# Create the boxplot
+ggplot(data, aes(x = SOC_predict_wavg, y = CROP)) +
+  geom_boxplot(fill = "skyblue", color = "black", outlier.size = 1) +
+  theme_minimal() +
+  labs(
+    title = "SOC Prediction Distribution by Crop",
+    x = "SOC_predict_wavg (t C/ha)",
+    y = "Crop"
+  ) +
+  theme(
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14)
+  )
+
+```
+
+## Dot size
+
+
+```{r pressure, echo=FALSE}
+
+# Create the plot
+ggplot(data, aes(x = CARB30_wavg, y = Cinput_wavg, color = CROP, size = SOC_predict_wavg)) +
+  geom_point(alpha = 0.7) +
+  theme_minimal() +
+  scale_size_continuous(range = c(1, 10)) +
+  labs(
+    title = "Cinput vs Cstock by Crop with SOC Prediction (t/ha)",
+    x = "Cstock_wavg (g/m2)",
+    y = "Cinput_wavg (t/ha)",
+    size = "Delta SOC (t/ha)",
+    color = "CROP"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "right",
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 5),
+    legend.title = element_text(size = 5, face = "bold"),
+    plot.margin = unit(c(50, 10, 40, 10), "pt")  # top, right, bottom, left
+  )
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

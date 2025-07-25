@@ -1,0 +1,206 @@
+---
+title: "0.1 Data quality check"
+author: "Dr. Chih-Yu Hung"
+date: "2025-07-24"
+output: html_document
+---
+
+## Check the model applcapbility and quality of output
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+source("setup.R")
+US_Data <- read_csv(us_outputs("0.4_US_Cinput.csv"))
+
+CA_Data <- read_rds("Input/Canada Cinput_5y.rds") %>%
+  filter(CROPS %in% c("BARLEY", "CANOLA", "CORNGR",
+                      "CORNSLG", "DFPEAS", "RYEFAL",
+                      "WHTSPG", "WHTDUR", "WHTWINT", 
+                      "SOYBNS", "TRICTCL", "RYESPG")) %>%
+  mutate(UTIL_PRACTICE_DESC = case_when(
+    CROPS ==  "CORNGR"      ~ "GRAIN",
+    CROPS ==  "CORNSLG"     ~ "SILAGE",
+    TRUE                    ~ "ALL UTILIZATION PRACTICES"
+  )) %>%
+  mutate(CLASS = case_when(
+    CROPS ==  "WHTSPG"      ~ "SPRING, (EXCL DURUM)",
+    CROPS ==  "WHTWINT"     ~ "WINTER",
+    CROPS ==  "WHTDUR"      ~ "SPRING, DURUM",
+    CROPS ==  "DFPEAS"      ~ "DRY EDIBLE",
+    TRUE                    ~ "ALL CLASEES"
+  )) %>%
+  mutate(CROPS = case_when(
+    CROPS %in%  c("CORNGR","CORNSLG")           ~ "CORN",
+    CROPS %in%  c("WHTSPG","WHTWINT","WHTDUR")  ~ "WHEAT",
+    CROPS %in%  c("RYEFAL", "RYESPG")           ~ "RYE",
+    CROPS ==  "DFPEAS"                          ~ "PEAS",
+    CROPS ==  "TRICTCL"                         ~ "TRITICALE",
+    CROPS ==  "SOYBNS"                          ~ "SOYBEANS",
+    TRUE                                        ~  CROPS
+  )) %>%
+  select(STATE = Province_ID, COUNTY = ECODISTRIC, CROP = CROPS, CLASS, UTIL_PRACTICE_DESC,
+         AREA, Cinput, MAP, MAT, MPE, CARB30, Texture = TEXCAT, Frac)
+
+SiteData <- rbind (US_Data, CA_Data) %>%
+    mutate(TEXT = case_when(
+    Texture %in% c("fine","Fine")        ~ 3,
+    Texture %in% c("medium","Medium")    ~ 2,
+    Texture %in% c("coarse","Coarse")    ~ 1,
+    TRUE                   ~NA_integer_
+  ))
+
+```
+
+## Check the % of production within Canada's MAP, MAT...
+
+### Compare the US and CA data together
+
+64.5% of area in the similar environment. The production could be higher if we consider the large amount of corn in CA.
+
+If we go to MAT 14 degree C, We include 84% of production, 15 degree C, 88% of production.
+
+### If compare the data in the US only (Code not show here)
+67% and 61% of crop production and area in similar environment, respectively.
+
+If we go to MAP 14 degree C, We include 86% of production, 15 degree C, 90% of production.
+
+```{r }
+
+Area <- SiteData %>% 
+      filter(MAT >= -1 & MAT <= 11) %>%
+      filter(MAP >= 300 & MAP <= 2500)
+
+
+sum(Area$AREA) / sum(SiteData$AREA) # 64.5% of total area
+```
+
+## Run the RF model
+
+
+```{r }
+load("Output/Model_5.RData") # ML model from 5-y moving average.
+
+SiteData$SOC_predict <- predict(rf_model, newdata = SiteData)
+
+#CAP deltaSOC to Cinput
+SiteData <- SiteData %>%
+  mutate(SOC_predict = ifelse(SOC_predict > Cinput, Cinput, SOC_predict))
+
+
+#group the data to STATE/Province level
+Result <- SiteData %>%
+  mutate(CROP_ID = case_when(
+    CROP == "CORN"          ~ paste0(CROP, "_", UTIL_PRACTICE_DESC, ""),
+    CROP == "WHEAT"         ~ paste0(CROP, "_", CLASS, ""),
+    TRUE                    ~ CROP 
+  ))
+
+
+#helper for weighted means that gracefully handles all-NA cases
+w_mean <- function(x, w) {
+  if (all(is.na(x))) return(NA_real_)
+  weighted.mean(x, w, na.rm = TRUE)
+}
+
+#obtain weighted values and simple average
+Result_State <- Result %>% 
+  mutate(area_w = AREA * Frac / 100) %>%          # weight column once
+  group_by(STATE, CROP_ID) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, area_w)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  )%>% 
+  select(STATE, CROP_ID, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
+
+```
+
+
+## draw maps to see the SOC change across North America
+
+```{r}
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthhires)
+
+# ───────────────────────── 1. polygons ─────────────────────────────
+na_states <- ne_states(returnclass = "sf") %>%        # provinces + states
+  filter(admin %in% c("United States of America", "Canada")) %>%
+  select(name = name_en, postal, geometry)
+
+# ───────────────────────── 2. tidy keys ────────────────────────────
+us_lookup <- tibble(
+  STATE      = toupper(state.name),      # <- uppercase!
+  postal     = state.abb
+)
+
+Result_State_prepped <- Result_State %>%
+  mutate(STATE = toupper(STATE)) %>%      # <- uppercase!
+  left_join(us_lookup, by = "STATE") %>%
+  mutate(postal = coalesce(postal, STATE)) %>%   # US abb or existing CA code
+  select(postal, CROP_ID, SOC_predict_wavg)      # keep what we need
+
+# ──────────────────────── 3. one row per region-crop ───────────────
+Result_State_single <- Result_State_prepped %>%
+  group_by(postal, CROP_ID) %>%
+  summarise(SOC_predict_wavg = mean(SOC_predict_wavg, na.rm = TRUE),
+            .groups = "drop")
+
+plot_data <- na_states %>%
+  left_join(Result_State_single, by = "postal") %>%
+  na.omit()
+
+
+# all 13 crop IDs present in your dataset ────────────────────────────────
+all_crops <- unique(plot_data$CROP_ID)
+
+# ── 2. distinct polygons (one row per province / state) ───────────────────────
+polygons_only <- plot_data %>%                      # keep name, postal & geometry
+  select(name, postal, geometry) %>% 
+  distinct()
+
+# ── 3. Cartesian product  (every polygon × every crop) ───────────────────────
+plot_data_full <- polygons_only %>%                 # start with polygons
+   crossing(CROP_ID = all_crops) %>%                # replicate 13×
+   left_join(plot_data, by = c("name", "postal", "CROP_ID", "geometry")
+  )
+
+# ── make the crossed table an sf object again ─────────────────────────
+plot_data_full <- st_as_sf(
+  plot_data_full,                     # your tibble with a ‘geometry’ column
+  crs = st_crs(polygons_only)         # re-attach the CRS from the source map
+)
+
+
+# ───────────────────────── 4. plot ─────────────────────────────────
+ggplot(plot_data_full) +
+  geom_sf(aes(fill = SOC_predict_wavg), colour = "grey70", size = 0.1) +
+  facet_wrap(~ CROP_ID) +
+  scale_fill_gradient2(
+    name       = "delta SOC (t/ha)",
+    low        = "#00008B",   # deep blue for SOC losses
+    mid        = "#ADD8E6",   # light-blue for ~0
+    high       = "#FFFF00",   # blue for SOC gains
+    midpoint   = 0,
+    na.value   = "white"      # NA polygons → white
+  ) +
+  coord_sf(crs = 3347) +       # Canada Albers equal-area (good for all NA)
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major = element_blank(),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = "right"
+  )
+
+
+ggsave("Figures/SOC_maps_by_crop.png", width = 10, height = 8)
+
+
+```
