@@ -1,0 +1,95 @@
+---
+title: "0.1 Data quality check_Agg"
+author: "Dr. Chih-Yu Hung"
+date: "2025-07-29"
+output: html_document
+---
+
+## Check the model applcapbility and quality of output
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+source("setup.R")
+US_Data <- read_csv("Output/1. SOC_Cinput_EF_US_Agg.csv") %>%
+  mutate(Region = STATE) %>%
+  select(-STATE)
+
+CA_Data <- read_csv("Output/1. SOC_Cinput_EF_Canada_Agg.csv")
+
+Result <- rbind(US_Data, CA_Data) %>%
+  mutate(Region = case_when(
+    Region == "AB"     ~ "ALBERTA",
+    Region == "AT"     ~ "ATLANTIC",
+    Region == "BC"     ~ "BRITISH COLUMBIA",
+    Region == "MB"     ~ "MANITOBA",
+    Region == "QC"     ~ "QUEBEC",
+    Region == "SK"     ~ "SASKATCHEWAN",
+    Region == "ON"     ~ "ONTARIO",
+    TRUE               ~ Region
+  ))
+
+
+
+ 
+```
+
+## draw maps to see the SOC change across North America
+
+```{r}
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthhires)   # high-res polygons
+
+Result <- rbind(US_Data, CA_Data)
+
+# ───────────────────────── 1. polygons ─────────────────────────────
+na_states <- ne_states(returnclass = "sf") %>%           # provinces + states
+  filter(admin %in% c("United States of America", "Canada")) %>%
+  select(name = name_en, postal, geometry)
+
+# ───────────────────────── 2. tidy keys ────────────────────────────
+us_lookup <- tibble(
+  Region = toupper(state.name),   # full state names → upper-case
+  postal = state.abb
+)
+
+Result_state_prepped <- Result %>%                # your data
+  mutate(Region = toupper(Region)) %>%                  # same case as lookup
+  left_join(us_lookup, by = "Region") %>%               # add postal codes
+  mutate(postal = coalesce(postal, Region)) %>%         # CA codes already okay
+  group_by(postal) %>%                                  # just in case duplicates
+  summarise(SOC_predict_wavg = mean(SOC_predict_wavg, na.rm = TRUE),
+            .groups = "drop")
+
+# ───────────────────────── 3. join polygons + data ─────────────────
+plot_data <- na_states %>%
+  left_join(Result_state_prepped, by = "postal")
+
+# ───────────────────────── 4. draw map ─────────────────────────────
+soc_map <- ggplot(plot_data) +
+  geom_sf(aes(fill = SOC_predict_wavg), colour = "grey70", size = 0.1) +
+  scale_fill_gradient2(
+    name     = "ΔSOC (t ha⁻¹)",
+    low      = "#00008B",  # deep blue  (losses)
+    mid      = "#ADD8E6",  # light blue (≈0)
+    high     = "#FFFF00",  # yellow     (gains)
+    midpoint = 0,
+    na.value = "white"     # no data
+  ) +
+  coord_sf(crs = 3347) +   # Canada Albers equal-area
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major = element_blank(),
+    legend.position  = "right"
+  )
+
+print(soc_map)
+
+# ───────────────────────── 5. save file ────────────────────────────
+ggsave("Figures/SOC_map_Agg.png", soc_map, width = 8, height = 6, dpi = 300)
+
+
+```

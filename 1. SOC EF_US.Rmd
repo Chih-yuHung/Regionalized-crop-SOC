@@ -25,9 +25,71 @@ SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
     Texture == "Coarse"    ~ 1,
     TRUE                   ~NA_integer_
   ))
-  
+
+#helper for weighted means that gracefully handles all-NA cases
+w_mean <- function(x, w) {
+  if (all(is.na(x))) return(NA_real_)
+  weighted.mean(x, w, na.rm = TRUE)
+}  
+
+Area <- SiteData %>%
+        group_by(STATE)%>% 
+        summarise(Area = sum(AREA)/3) %>%
+        mutate(Area_Perc = Area/sum(Area)*100)
 
 ```
+
+## SOC change prediction, Not CROP Specific!
+
+County level first and aggregate to state level
+
+```{r not crop specific}
+
+SiteData_Agg <- SiteData %>%
+  mutate(AREA = AREA * Frac/100) %>%
+  group_by(STATE, COUNTY, TEXT) %>%
+  summarise(
+    Cinput = sum(Cinput * AREA) / sum(AREA),
+    total_area = sum(AREA),
+    MAT = first(MAT),
+    MAP = first(MAP),
+    MPE = first(MPE),
+    CARB30 = first(CARB30),
+    .groups = 'drop'
+  ) %>%
+  na.omit()
+    
+#County level data
+SiteData_Agg$SOC_predict <- predict(rf_model, newdata = SiteData_Agg)
+
+
+
+# Aggregated to state level
+#obtain weighted values and simple average
+SiteData_State <- SiteData_Agg %>% 
+  group_by(STATE) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, total_area)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  )%>% 
+  select(STATE, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
+  
+SiteData_State <- SiteData_State %>%
+  left_join(Area, by = "STATE")
+
+summary(SiteData_State) # SOC_predict_wavg, median 0.13371, mean 0.17385, min 0.04158 t/ha
+#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg.csv", row.names = FALSE)
+
+
+```
+
+
+
 
 ## SOC change prediction
 
@@ -44,12 +106,6 @@ SiteData <- SiteData %>%
 #write.csv(SiteData, "Output/1. SOC_Cinput_EF_US_county.csv", row.names = FALSE)
 
 # Aggregated to state level
-#helper for weighted means that gracefully handles all-NA cases
-w_mean <- function(x, w) {
-  if (all(is.na(x))) return(NA_real_)
-  weighted.mean(x, w, na.rm = TRUE)
-}
-
 #obtain weighted values and simple average
 SiteData_State <- SiteData %>% 
   filter(Cinput > 0) %>%

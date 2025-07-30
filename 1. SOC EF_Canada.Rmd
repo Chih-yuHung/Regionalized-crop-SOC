@@ -21,9 +21,74 @@ SiteData <- read_rds("Input/Canada Cinput_5y.rds") %>%
             TEXCAT == "medium"    ~ 2,
             TEXCAT == "coarse"    ~ 1,
             TRUE                   ~NA_integer_
-               ))
-  
+               )) %>%
+     mutate(Region = ifelse(
+     Province_ID %in% c("NB","NF","NS","PE"), "AT", Province_ID
+     )) %>%
+     filter(CROPS %in% c("BARLEY", "CANOLA", "CORNGR", "CORNSLG", "DFPEAS",
+         "RYEFAL", "WHTSPG", "SOYBNS", "WHTDUR", "WHTWINT",
+         "TRITCL", "RYESPG"))
+
+Area <- SiteData %>%
+        group_by(Region) %>%
+        summarise(Area = sum(AREA)) %>%
+        mutate(Area_Perc = Area/sum(Area)*100)
+
+
+#helper for weighted means that gracefully handles all-NA cases
+w_mean <- function(x, w) {
+  if (all(is.na(x))) return(NA_real_)
+  weighted.mean(x, w, na.rm = TRUE)
+}  
 ```
+
+## SOC change prediction, Not CROP Specific!
+
+County level first and aggregate to state level
+
+```{r not crop specific}
+
+#aggregate crops
+SiteData_Agg <-SiteData %>%
+  group_by(Region, ECODISTRIC, TEXT) %>%
+  summarise(
+    Cinput = sum(Cinput * AREA) / sum(AREA),
+    total_area = sum(AREA),
+    MAT = first(MAT),
+    MAP = first(MAP),
+    MPE = first(MPE),
+    CARB30 = first(CARB30),
+    .groups = 'drop'
+  ) %>%
+  na.omit()
+
+#Ecodistrict level data
+SiteData_Agg$SOC_predict <- predict(rf_model, newdata = SiteData_Agg)
+
+
+#obtain weighted values and simple average
+SiteData_CA <- SiteData_Agg %>% 
+  group_by(Region) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, total_area)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  ) %>%
+  select(Region, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
+  left_join(Area, by = "Region")
+
+
+summary(SiteData_CA) # SOC_predict_wavg, median 0.1392, mean 0.1600, min 0.1030 t/ha
+#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada_Agg.csv", row.names = FALSE)
+
+```
+
+
+
 
 ## SOC change prediction
 
