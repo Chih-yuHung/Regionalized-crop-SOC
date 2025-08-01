@@ -14,10 +14,11 @@ We are using the RF model (5-y moving average) to estimate SOC changes from crop
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 source("setup.R")
-load("Output/Model_5.RData") # ML model from 5-y moving average.
+#load("Output/Model_5.RData") # ML model from 5-y moving average.
 #model <-read_rds("Models/SiteData_5y_20250721.rds")
+load("Output/Model_5(new baseline).RData") # ML model from 5-y moving average.
 
-
+#data for 2018-2022
 SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
   mutate(TEXT = case_when(
     Texture == "Fine"      ~ 3,
@@ -25,6 +26,16 @@ SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
     Texture == "Coarse"    ~ 1,
     TRUE                   ~NA_integer_
   ))
+
+#data for 2007-2012
+SiteData_nb <- read_csv(us_outputs("0.4_US_Cinput_newbaseline.csv")) %>%
+  mutate(TEXT = case_when(
+    Texture == "Fine"      ~ 3,
+    Texture == "Medium"    ~ 2,
+    Texture == "Coarse"    ~ 1,
+    TRUE                   ~NA_integer_
+  ))
+
 
 #helper for weighted means that gracefully handles all-NA cases
 w_mean <- function(x, w) {
@@ -44,7 +55,7 @@ Area <- SiteData %>%
 County level first and aggregate to state level
 
 ```{r not crop specific}
-
+#2018-2022
 SiteData_Agg <- SiteData %>%
   mutate(AREA = AREA * Frac/100) %>%
   group_by(STATE, COUNTY, TEXT) %>%
@@ -58,10 +69,26 @@ SiteData_Agg <- SiteData %>%
     .groups = 'drop'
   ) %>%
   na.omit()
+
+#2007-2012
+SiteData_Agg_nb <- SiteData_nb %>%
+  mutate(AREA = AREA * Frac/100) %>%
+  group_by(STATE, COUNTY, TEXT) %>%
+  summarise(
+    Cinput = sum(Cinput * AREA) / sum(AREA),
+    total_area = sum(AREA),
+    MAT = first(MAT),
+    MAP = first(MAP),
+    MPE = first(MPE),
+    CARB30 = first(CARB30),
+    .groups = 'drop'
+  ) %>%
+  na.omit()
+
     
 #County level data
 SiteData_Agg$SOC_predict <- predict(rf_model, newdata = SiteData_Agg)
-
+SiteData_Agg_nb$SOC_predict <- predict(rf_model, newdata = SiteData_Agg_nb)
 
 
 # Aggregated to state level
@@ -77,13 +104,31 @@ SiteData_State <- SiteData_Agg %>%
     ),
     .groups = "drop"                              # remove grouping (optional)
   )%>% 
-  select(STATE, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg)
-  
-SiteData_State <- SiteData_State %>%
+  select(STATE, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
   left_join(Area, by = "STATE")
 
-summary(SiteData_State) # SOC_predict_wavg, median 0.13371, mean 0.17385, min 0.04158 t/ha
-#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg.csv", row.names = FALSE)
+summary(SiteData_State) # SOC_predict_wavg, median 0.13371, mean 0.17385, min -00.302807 t/ha
+write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg_(no baseline).csv", row.names = FALSE)
+
+
+#New baseline from 2007-2012
+SiteData_State_nb <- SiteData_Agg_nb %>% 
+  group_by(STATE) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, total_area)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  )%>% 
+  select(STATE, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
+  left_join(Area, by = "STATE")
+
+summary(SiteData_State_nb) # SOC_predict_wavg, median 0.052651, mean 0.0.002901, -min 0.04158-0.302807 t/ha
+write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg_(no baseline).csv", row.names = FALSE)
+
 
 
 ```
