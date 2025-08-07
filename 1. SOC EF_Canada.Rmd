@@ -14,7 +14,9 @@ We are using the RF model (5-y moving average) to estimate SOC changes from crop
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 source("setup.R")
-load("Output/Model_5.RData") # ML model from 5-y moving average.
+#load("Output/Model_5.RData") # ML model from 5-y moving average.
+load("Output/Model_5(no baseline).RData") # ML model from 5-y moving average using data without baseline adj
+
 SiteData <- read_rds("Input/Canada Cinput_5y.rds") %>%
             mutate(TEXT = case_when(
             TEXCAT == "fine"      ~ 3,
@@ -28,6 +30,21 @@ SiteData <- read_rds("Input/Canada Cinput_5y.rds") %>%
      filter(CROPS %in% c("BARLEY", "CANOLA", "CORNGR", "CORNSLG", "DFPEAS",
          "RYEFAL", "WHTSPG", "SOYBNS", "WHTDUR", "WHTWINT",
          "TRITCL", "RYESPG"))
+
+SiteData_nb <- read_rds("Input/Canada Cinput_2002-2012.rds") %>%
+            mutate(TEXT = case_when(
+            TEXCAT == "fine"      ~ 3,
+            TEXCAT == "medium"    ~ 2,
+            TEXCAT == "coarse"    ~ 1,
+            TRUE                   ~NA_integer_
+               )) %>%
+     mutate(Region = ifelse(
+     Province_ID %in% c("NB","NF","NS","PE"), "AT", Province_ID
+     )) %>%
+     filter(CROPS %in% c("BARLEY", "CANOLA", "CORNGR", "CORNSLG", "DFPEAS",
+         "RYEFAL", "WHTSPG", "SOYBNS", "WHTDUR", "WHTWINT",
+         "TRITCL", "RYESPG"))
+
 
 Area <- SiteData %>%
         group_by(Region) %>%
@@ -62,9 +79,23 @@ SiteData_Agg <-SiteData %>%
   ) %>%
   na.omit()
 
+SiteData_Agg_nb <-SiteData_nb %>%
+  group_by(Region, ECODISTRIC, TEXT) %>%
+  summarise(
+    Cinput = sum(Cinput * AREA) / sum(AREA),
+    total_area = sum(AREA),
+    MAT = first(MAT),
+    MAP = first(MAP),
+    MPE = first(MPE),
+    CARB30 = first(CARB30),
+    .groups = 'drop'
+  ) %>%
+  na.omit()
+
+
 #Ecodistrict level data
 SiteData_Agg$SOC_predict <- predict(rf_model, newdata = SiteData_Agg)
-
+SiteData_Agg_nb$SOC_predict <- predict(rf_model, newdata = SiteData_nb_Agg)
 
 #obtain weighted values and simple average
 SiteData_CA <- SiteData_Agg %>% 
@@ -81,16 +112,58 @@ SiteData_CA <- SiteData_Agg %>%
   select(Region, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
   left_join(Area, by = "Region")
 
+summary(SiteData_CA) #median 0.04411, mean 0.05814
+#write.csv(SiteData_CA, "Output/1.1 SOC_Cinput_EF_Canada_Agg_(no baseline).csv", row.names = FALSE)
 
-summary(SiteData_CA) # SOC_predict_wavg, median 0.1392, mean 0.1600, min 0.1030 t/ha
-#write.csv(SiteData_CA, "Output/1. SOC_Cinput_EF_Canada_Agg.csv", row.names = FALSE)
+SiteData_CA_nb <- SiteData_Agg_nb %>% 
+  group_by(Region) %>% 
+  summarise(
+    across(
+      c(Cinput, MAT, MAP, MPE, CARB30, SOC_predict),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, total_area)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  ) %>%
+  select(Region, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
+  left_join(Area, by = "Region")
 
+summary(SiteData_CA_nb) #median 0.018345, mean 0.019179
+#write.csv(SiteData_CA_nb, "Output/1.1 SOC_Cinput_EF_Canada_Agg_(baseline).csv", row.names = FALSE)
+
+
+## Calculate the deltaSOCAdj The baseline make the deltaSOC to 0. (County level)
+SiteData_Adj <- SiteData_Agg %>%
+  left_join(SiteData_nb_Agg, by = c("Region","ECODISTRIC","TEXT")) %>%
+  mutate(deltaAdj = SOC_predict.x - SOC_predict.y,
+         deltaCinput = Cinput.x - Cinput.y)
+summary(SiteData_Adj$deltaCinput) #median 0.4195, mean 0.4130
+
+## Calculate the deltaSOCAdj Region level
+SiteData_Adj_Region <- SiteData_Adj %>%
+group_by(Region) %>% 
+  summarise(
+    across(
+      c(deltaAdj),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, total_area.x)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  )%>% 
+  select(Region, deltaAdj_wavg)
+
+summary(SiteData_Adj_Region) #median 0.0392830, mean 0.038008
+#write.csv(SiteData_Adj_Region, "Output/1. SOC_Cinput_EF_Canada_Agg.csv", row.names = FALSE)
 ```
 
 
 
 
-## SOC change prediction
+
+
+## SOC change prediction, Crop specific
 
 county level first and aggregate to state level
 

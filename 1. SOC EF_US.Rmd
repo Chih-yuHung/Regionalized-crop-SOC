@@ -15,8 +15,7 @@ We are using the RF model (5-y moving average) to estimate SOC changes from crop
 knitr::opts_chunk$set(echo = TRUE)
 source("setup.R")
 #load("Output/Model_5.RData") # ML model from 5-y moving average.
-#model <-read_rds("Models/SiteData_5y_20250721.rds")
-load("Output/Model_5(new baseline).RData") # ML model from 5-y moving average.
+load("Output/Model_5(no baseline).RData") # ML model from 5-y moving average using data without baseline adj
 
 #data for 2018-2022
 SiteData <- read_csv(us_outputs("0.4_US_Cinput.csv")) %>%
@@ -70,7 +69,7 @@ SiteData_Agg <- SiteData %>%
   ) %>%
   na.omit()
 
-#2007-2012
+#2002-2012
 SiteData_Agg_nb <- SiteData_nb %>%
   mutate(AREA = AREA * Frac/100) %>%
   group_by(STATE, COUNTY, TEXT) %>%
@@ -107,8 +106,8 @@ SiteData_State <- SiteData_Agg %>%
   select(STATE, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
   left_join(Area, by = "STATE")
 
-summary(SiteData_State) # SOC_predict_wavg, median 0.13371, mean 0.17385, min -00.302807 t/ha
-write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg_(no baseline).csv", row.names = FALSE)
+summary(SiteData_State) # SOC_predict_wavg, median 0.052651, mean 0.002901, min -0.302807 t/ha
+#write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg_(no baseline).csv", row.names = FALSE)
 
 
 #New baseline from 2007-2012
@@ -126,17 +125,39 @@ SiteData_State_nb <- SiteData_Agg_nb %>%
   select(STATE, Cinput_wavg, MAT_wavg, MAP_wavg, MPE_wavg, CARB30_wavg,SOC_predict_wavg) %>%
   left_join(Area, by = "STATE")
 
-summary(SiteData_State_nb) # SOC_predict_wavg, median 0.052651, mean 0.0.002901, -min 0.04158-0.302807 t/ha
-write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_Agg_(no baseline).csv", row.names = FALSE)
+summary(SiteData_State_nb) # SOC_predict_wavg, median 0.05036, mean 0.0.00210, min -0.30214 t/ha
+#write.csv(SiteData_State_nb, "Output/1. SOC_Cinput_EF_US_Agg_(baseline).csv", row.names = FALSE)
 
 
+## Calculate the deltaSOCAdj The baseline make the deltaSOC to 0. (County level)
+SiteData_Adj <- SiteData_Agg %>%
+  left_join(SiteData_Agg_nb, by = c("STATE","COUNTY","TEXT")) %>%
+  mutate(deltaAdj = SOC_predict.x - SOC_predict.y,
+         deltaCinput = Cinput.x - Cinput.y)
+summary(SiteData_Adj$deltaCinput) #median 1.2418, mean 1.2730
 
+## Calculate the deltaSOCAdj The baseline make the deltaSOC to 0. (County level)
+SiteData_Adj_State <- SiteData_Adj %>%
+group_by(STATE) %>% 
+  summarise(
+    across(
+      c(deltaAdj),
+      list(avg  = ~mean(.x, na.rm = TRUE),
+           wavg = ~w_mean(.x, total_area.x)),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"                              # remove grouping (optional)
+  )%>% 
+  select(STATE, deltaAdj_wavg)
+
+summary(SiteData_Adj_State) #median 0.0000, mean 0.0007753
+#write.csv(SiteData_Adj_State, "Output/1. SOC_Cinput_EF_US_Agg.csv", row.names = FALSE)
 ```
 
 
 
 
-## SOC change prediction
+## SOC change prediction, CROP specific, not used in the biofuel project
 
 county level first and aggregate to state level
 
@@ -187,22 +208,6 @@ SiteData_State <- SiteData %>%
 
 summary(SiteData_State) # SOC_predict_wavg, median 0.064014, mean 0.092966, min -0.111136 t/ha
 #write.csv(SiteData_State, "Output/1. SOC_Cinput_EF_US_GrainAgg.csv", row.names = FALSE)
-
-```
-
-
-## QC check. if I put dummy 0 for Cinput, would delta SOC go to 0?
-
-```{r}
-SiteData_QC <- SiteData %>% 
-  mutate(Cinput  = 0.01)
-
-SiteData_QC$SOC_predict <- predict(rf_model, newdata = SiteData_QC)
-  
-
-
-
-
 
 ```
 
