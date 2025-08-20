@@ -12,7 +12,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 source("setup.R")
-US_Data <- read_csv("Output/1. SOC_Cinput_EF_US_Agg.csv") %>%
+US_Data <- read_csv("Output/1. SOC_Cinput_EF_US_Agg_(no baseline).csv") %>%
   mutate(Region = STATE) %>%
   select(-STATE)
 

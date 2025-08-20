@@ -1,0 +1,75 @@
+---
+title: "4. SOC change_Tillage_Canada"
+author: "Dr. Chih-Yu Hung"
+date: "2025-08-16"
+output: html_document
+---
+
+## SOC change due to tillage
+
+The data is directly from our inventory. I didn't do any new calculation
+The unit in the input file is kt CO22 and ha. 
+
+
+```{r data input}
+#Wrangle data
+source("setup.R")
+
+tillage <- read.csv("Input/Tillage EF_wide_wrangle.csv")
+
+# Generate a sequence of years from 1990 to 2022
+years <- seq(1990, 2022)
+
+# Create an empty vector to store the column names
+column_names <- character(length(years) * 2)
+
+# Assign names for CO2e and Act.Area columns for each year
+for (i in seq_along(years)) {
+  column_names[(i - 1) * 2 + 1] <- paste0("CO2e_", years[i])
+  column_names[(i - 1) * 2 + 2] <- paste0("Act.Area_", years[i])
+}
+
+# Assign the generated column names to the respective columns
+colnames(tillage)[-(1:2)] <- column_names
+
+
+tillage_long <- pivot_longer(tillage, 
+                             cols = -c(Province, Practices), 
+                             names_to = c(".value", "Year"), 
+                             names_pattern = "(CO2e|Act\\.Area)_(\\d{4})")
+
+SOC_tillage <- tillage_long %>%
+  filter(Practices %in%  c("Total", "Conventional to Zero-till") &
+         years %in% c(2018:2022)) %>%
+  mutate(SOC = CO2e / 44 * 12 * 10^6) %>% # Convert CO2e to C and from kt to kg 
+  group_by(Province, Practices, Year) %>%
+  summarise(SOC = sum(SOC), 
+            Act.Area = sum(Act.Area))
+
+
+#Replace activity area with total area
+SOC_tillage_total <- SOC_tillage %>%
+  left_join(
+    SOC_tillage %>% filter(Practices == "Total") %>%
+      select(Province, Year, Act.Area_total = Act.Area),
+    by = c("Province", "Year")
+  ) %>%
+  mutate(
+    Act.Area = if_else(Practices.x == "Conventional to Zero-till",
+                       Act.Area_total, Act.Area)
+  ) %>%
+  select(Province, Year, Practices = Practices.x, Act.Area, SOC ,-Act.Area_total, -Practices.y) %>%
+  filter(Practices == "Conventional to Zero-till")
+
+
+# Take average for Maritime regions
+SOC_tillage_region <- SOC_tillage_total %>%
+  mutate(Region = ifelse(Province %in% c("NB", "NL", "NS", "PE"), "MT", Province)) %>%
+  group_by(Region) %>%
+  summarize(SOC_IEF = sum(SOC)/sum(Act.Area))
+
+
+# Write the data frame
+write.csv(SOC_tillage_region, "Output/4. SOC_Tillage_EF_Canada.csv", row.names = FALSE)
+
+```

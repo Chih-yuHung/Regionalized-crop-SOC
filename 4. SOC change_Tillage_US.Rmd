@@ -1,0 +1,51 @@
+---
+title: "4. SOC change_Tillage_US"
+author: "Dr. Chih-Yu Hung"
+date: "2025-08-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+source("setup.R")
+
+Area_age <- read_csv(us_outputs("5_US Tillage area.csv"))
+
+#Area data, no need to use county data as the change is based on state
+#Need to use total agri area as the tillage practice include all crops
+Area <- read_csv(us_outputs("3.3_Area_County_Crop_reconciled.csv")) %>%
+   filter(DOUBLE == "N") %>%                      #remove double crop area
+   group_by(STATE, YEAR) %>%
+   summarise(Area_avg = sum(AREA))
+```
+
+
+```{r cars}
+#DeltaSOC calculation
+
+deltaSOC <- Area_age %>%
+  mutate(SOCchange_US_em = 1436.812 * exp(-0.068*age), # US average
+         SOCchange_CA_mo = 131.1 * exp(-0.02517*age), # CA estimate
+  #mutate(SOCchange = 981.063 * exp(-0.024*age), # MAT >10
+         Totalchange_US_em = SOCchange_US_em * area,
+         Totalchange_CA_mo = SOCchange_CA_mo *area) %>%
+  group_by(STATE, year_eval) %>%
+  summarise(
+    Totalchange_sum_US = sum(Totalchange_US_em, na.rm = TRUE),
+    #Avgchange_US = Totalchange_sum_US,
+    Totalchange_sum_CA = sum(Totalchange_CA_mo, na.rm = TRUE),
+    #Avgchange_CA = Totalchange_sum_CA,
+    .groups = "drop"
+  ) %>%
+  left_join(Area, by = c("STATE", "year_eval" = "YEAR")) %>%   #add total agr area in 2018-2022
+  mutate(SOC_change_rate_US = Totalchange_sum_US / Area_avg,
+         SOC_change_rate_CA = Totalchange_sum_CA / Area_avg) %>%
+  group_by(STATE) %>%
+  summarise(
+    SOC_change_rate_US = mean(SOC_change_rate_US),
+    SOC_change_rate_CA = mean(SOC_change_rate_CA)) # Actually same to county data
+
+write.csv(deltaSOC, "Output/4. SOC_Tillage_EF_US.csv", row.names = FALSE)
+
+```
+

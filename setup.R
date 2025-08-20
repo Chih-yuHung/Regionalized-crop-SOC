@@ -17,7 +17,7 @@ suppressPackageStartupMessages({
 # Define the target crops
 target_crops <- c("Rye(spring)", "Barley", "Wheat(spring)", "Corn(grain)", "Canola", 
                   "Wheat(durum)", "Corn(silage)", "Peas", "Rye(fall)", "Soybeans", 
-                  "Wheat(winter)", "Sorghum", "Camelina", "Triticale")
+                  "Wheat(winter)", "Sorghum", "Camelina", "Triticale","Rye", "Wheat", "Corn")
 
 target_cropID <-  c(3, 4, 11, 14, 15, 16, 18, 19, 20, 21, 22, 24)
 
