@@ -43,29 +43,38 @@ Census <- read_csv(us_outputs("../Inputs/Tillage area_Census.csv")) %>% #acres
 
 deltaSOC <- Area_age %>%
   mutate(SOCchange_US_em = 1436.812 * exp(-0.068*age), # US average
+         SOCchange_US_sa = 720.79   * exp(-0.028*age), # US saturation
          SOCchange_CA_mo = 131.1 * exp(-0.02517*age), # CA estimate
-  #mutate(SOCchange = 981.063 * exp(-0.024*age), # MAT >10
+         SOCchange_CA_Chang = 1014.9 * exp(-0.081*age), # Chang from Canada's studies
          Totalchange_US_em = SOCchange_US_em * area,
-         Totalchange_CA_mo = SOCchange_CA_mo * area) %>%
+         Totalchange_US_sa = SOCchange_US_sa * area,
+         Totalchange_CA_mo = SOCchange_CA_mo * area,
+         Totalchange_CA_Chang = SOCchange_CA_Chang * area) %>%
   group_by(STATE, year_eval) %>%
   summarise(
     Totalchange_sum_US = sum(Totalchange_US_em, na.rm = TRUE),
     #Avgchange_US = Totalchange_sum_US,
+    Totalchange_sum_US_SA = sum(Totalchange_US_sa, na.rm = TRUE),
     Totalchange_sum_CA = sum(Totalchange_CA_mo, na.rm = TRUE),
     #Avgchange_CA = Totalchange_sum_CA,
+    Totalchange_sum_CA_Chang = sum(Totalchange_CA_Chang, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   left_join(Area, by = c("STATE", "year_eval" = "YEAR")) %>%   #add total agr area in 2018-2022
   mutate(SOC_change_rate_US = Totalchange_sum_US / Area_sum,
-         SOC_change_rate_CA = Totalchange_sum_CA / Area_sum) %>%
+         SOC_change_rate_US_SA = Totalchange_sum_US_SA / Area_sum,
+         SOC_change_rate_CA = Totalchange_sum_CA / Area_sum,
+         SOC_change_rate_CA_Chang = Totalchange_sum_CA_Chang / Area_sum) %>%
   group_by(STATE) %>%                                          #take the average for 2018-2022
   summarise(
     SOC_change_rate_US = mean(SOC_change_rate_US),
-    SOC_change_rate_CA = mean(SOC_change_rate_CA)) %>%         # Actually same to county data
-  left_join(Census, by = "STATE"           )                   # to compare the CTNT trend
+    SOC_change_rate_US_Saturation = mean(SOC_change_rate_US_SA),
+    SOC_change_rate_CA = mean(SOC_change_rate_CA),
+    SOC_change_rate_CA_Chang = mean(SOC_change_rate_CA_Chang)) %>%         # Actually same to county data
+  left_join(Census, by = "STATE")                   # to compare the CTNT trend
 
-summary(deltaSOC) #SOC_US, 64.307, SOC_CA 13.081, NT_2022_prop 0.35700, NT_1990_prop 0.049220
-#write.csv(deltaSOC, "Output/4. SOC_Tillage_EF_US.csv", row.names = FALSE)
+summary(deltaSOC) #SOC_US, 64.307, SOC_CA 13.081, SOC_Chang 37.87 ,NT_2022_prop 0.35700, NT_1990_prop 0.049220
+write.csv(deltaSOC, "Output/4. SOC_Tillage_EF_US.csv", row.names = FALSE)
 
 ```
 

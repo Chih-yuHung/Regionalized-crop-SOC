@@ -85,9 +85,10 @@ pick_year <- function(df, yr, ha_name, prop_name) {
 }
 
 nt_2022 <- pick_year(Tillage_trend,  2022, "NT_2022_ha", "NT_2022_prop")
-nt_1990 <- pick_year(Tillage_trend,  2002, "NT_1990_ha", "NT_1990_prop")  # note: 2002
+nt_1990 <- pick_year(Tillage_trend,  1990, "NT_1990_ha", "NT_1990_prop")  # note: 1990
 
-Tillage_comp <- full_join(nt_2022, nt_1990, by = "Region") 
+Tillage_comp <- full_join(nt_2022, nt_1990, by = "Region") %>%
+                mutate(Diff = NT_2022_ha - NT_1990_ha)
 
 
 #keep 2022 and 2002 data only (2002 used to represent 1990 to compare with US data)
@@ -120,7 +121,7 @@ SOC_tillage_region <- SOC_tillage %>%
   left_join(Tillage_comp, by = "Region")
 
 # Write the data frame
-#summary(SOC_tillage_region) #SOC rate: 17.110, NT_2022_prop 0.17964, NT_1990_prop 0.12585
-#write.csv(SOC_tillage_region, "Output/4. SOC_Tillage_EF_Canada.csv", row.names = FALSE)
+summary(SOC_tillage_region) #SOC rate: 17.110, NT_2022_prop 0.17964, NT_1990_prop 0.015627, Diff 459203
+write.csv(SOC_tillage_region, "Output/4. SOC_Tillage_EF_Canada.csv", row.names = FALSE)
 
 ```
